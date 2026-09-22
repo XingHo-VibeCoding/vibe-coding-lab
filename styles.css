@@ -1,0 +1,198 @@
+/* ============================================================
+   随手笔记 NoteLab —— 样式
+   约束（TECH_DESIGN 第 7 节）：不引任何 CDN 字体、图标库，只用系统字体
+   ============================================================ */
+
+:root {
+  --bg: #f7f7f5;          /* 页面底色 */
+  --card: #ffffff;        /* 卡片底色 */
+  --border: #e5e3dc;      /* 描边 */
+  --text: #2c2c2a;        /* 主文字 */
+  --text-weak: #6b6a66;   /* 次要文字 */
+  --text-faint: #9a9893;  /* 更弱的提示文字 */
+  --blue: #185fa5;        /* 主色：蓝 */
+  --blue-bg: #e6f1fb;
+  --teal: #0f6e56;        /* 辅色：青，用于标签 */
+  --teal-bg: #e1f5ee;
+  --amber-bg: #faeeda;    /* 提醒底色 */
+  --amber: #854f0b;
+  --red: #a32d2d;         /* 错误提示 */
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ---------- 顶部标题 ---------- */
+.app-header {
+  padding: 18px 24px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.app-title { font-size: 18px; font-weight: 600; margin: 0; }
+.app-sub { font-size: 12px; color: var(--text-faint); }
+.note-count { margin-left: auto; font-size: 12px; color: var(--text-weak); }
+
+.app-main { max-width: 980px; margin: 0 auto; padding: 20px 24px 60px; }
+
+/* ---------- 输入区 ---------- */
+.composer {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+.composer textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.7;
+  color: var(--text);
+  background: transparent;
+  min-height: 72px;
+}
+.composer textarea::placeholder { color: var(--text-faint); }
+
+.composer-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.hint { font-size: 12px; color: var(--amber); flex: 1; }
+.hint.error { color: var(--red); }
+.counter { font-size: 12px; color: var(--text-faint); }
+
+/* ---------- 按钮 ---------- */
+.btn-primary, .btn-ghost {
+  font: inherit;
+  font-size: 13px;
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.btn-primary { background: var(--blue); color: #fff; }
+.btn-primary:hover { background: #124a80; }
+.btn-ghost { background: var(--card); border-color: var(--border); color: var(--text-weak); }
+.btn-ghost:hover { border-color: var(--blue); color: var(--blue); }
+
+/* ---------- 工具条（搜索 + 翻一翻）---------- */
+.toolbar { display: flex; gap: 10px; margin: 16px 0; }
+.toolbar input[type="search"] {
+  flex: 1;
+  font: inherit;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  outline: none;
+}
+.toolbar input[type="search"]:focus { border-color: var(--blue); }
+
+/* ---------- 两栏布局 ---------- */
+.layout { display: flex; gap: 20px; align-items: flex-start; }
+.sidebar {
+  width: 190px;
+  flex: 0 0 190px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.sidebar-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-faint);
+  margin: 0 0 8px;
+  letter-spacing: 1px;
+}
+.tag-list { list-style: none; margin: 0; padding: 0; }
+.tag-list li { margin-bottom: 4px; }
+.tag-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-weak);
+  cursor: pointer;
+}
+.tag-item:hover { background: var(--teal-bg); color: var(--teal); }
+.tag-item.active { background: var(--teal-bg); color: var(--teal); border-color: #9fe1cb; }
+.tag-item .count { font-size: 12px; color: var(--text-faint); }
+
+/* ---------- 笔记列表 ---------- */
+.list-area { flex: 1; min-width: 0; }
+.list-status { font-size: 12px; color: var(--text-weak); margin-bottom: 8px; }
+.note-list { list-style: none; margin: 0; padding: 0; }
+.note-item {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.note-item .note-text {
+  white-space: pre-wrap;   /* 保留换行（Enter 换行）*/
+  word-break: break-word;
+}
+.note-item .note-meta {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.note-tag {
+  background: var(--teal-bg);
+  color: var(--teal);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 12px;
+}
+mark { background: #faeeda; color: var(--amber); border-radius: 3px; padding: 0 2px; }
+
+.empty-state { color: var(--text-faint); text-align: center; padding: 30px 0; font-size: 13px; }
+
+/* ---------- 翻一翻卡片 ---------- */
+.random-card {
+  margin-top: 20px;
+  background: #fffdf6;
+  border: 1px solid #efd9a8;
+  border-left: 4px solid #d8a13a;
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.random-card .random-title { font-size: 12px; color: var(--amber); margin-bottom: 6px; }
+.random-card .random-text { white-space: pre-wrap; word-break: break-word; }
+
+/* ---------- 手机上的粗略适配（不做专门优化，PRD 第 5 节）---------- */
+@media (max-width: 720px) {
+  .layout { flex-direction: column; }
+  .sidebar { width: 100%; flex: none; }
+  .app-main { padding: 16px 14px 40px; }
+}
