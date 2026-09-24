@@ -6,6 +6,7 @@
      第 1 步 ✅ F1 写笔记、F5 本地保存
      第 2 步 ✅ F2 标签归类、F3 关键词搜索
      第 3 步 ✅ F4 随机回顾
+     Day 8  ✅ 主视图四态（加载中 / 有数据 / 空 / 出错）+ 可复用卡片组件 + 演示模式
    ============================================================ */
 
 const STORAGE_KEY = 'notelab.notes.v1';  // 存储键，见 TECH_DESIGN 第 6 节
@@ -22,6 +23,18 @@ const view = {
   activeTag: null,
   lastRandomId: null      // 用来避免连着两次翻到同一条（验收 4.2）
 };
+
+/* ------------------------------------------------------------
+   Day 8：页面地址参数与"页面状态"
+   - 网址后加 ?demo=1        → 演示模式，用 mock-data.js 里的假数据渲染
+   - 网址后加 &state=xxx     → 强制显示某种状态：loading / success / empty / error
+   ------------------------------------------------------------ */
+const urlParams = new URLSearchParams(location.search);
+const DEMO = urlParams.get('demo') === '1';
+
+// 四种页面状态：loading 加载中 / success 有数据 / empty 空 / error 出错
+let pageState = 'success';
+let pageError = '';
 
 /* ------------------------------------------------------------
    存储读写：只有这两个函数可以碰 localStorage（TECH_DESIGN 第 7 节约束 4）
@@ -99,7 +112,9 @@ const el = {
   emptyState: document.getElementById('empty-state'),
   listStatus: document.getElementById('list-status'),
   noteCount: document.getElementById('note-count'),
-  randomCard: document.getElementById('random-card')
+  randomCard: document.getElementById('random-card'),
+  statePanel: document.getElementById('state-panel'),     // 加载中 / 出错 两种状态
+  demoBanner: document.getElementById('demo-banner')      // 演示模式提示条
 };
 
 function showHint(text, isError = false, duration = 3000) {
@@ -116,6 +131,12 @@ function showHint(text, isError = false, duration = 3000) {
    ------------------------------------------------------------ */
 function addNote(rawText) {
   const content = rawText.trim();
+
+  // 演示模式：数据是假的，不允许写入，避免污染真实笔记
+  if (DEMO) {
+    showHint('演示模式：这里不会真的保存（点提示条上的「退出演示」就能正常记）', true, 5000);
+    return false;
+  }
 
   if (!content) {                                   // 验收 1.3
     showHint('先写点什么再保存', true);
@@ -278,47 +299,69 @@ function renderTagList() {
 }
 
 /* ------------------------------------------------------------
+   可复用组件：一张笔记卡片（Day 8 加练）
+   输入：一条笔记 + 当前搜索词 + 想生成的标签名（默认 li）
+   输出：一个可以直接塞进页面的元素
+   列表、"翻一翻"都在用它 —— 以后改卡片长相只改这一处
+   ------------------------------------------------------------ */
+function renderNoteCard(note, keyword = '', tagName = 'li') {
+  const tags = note.tags || [];
+  const card = document.createElement(tagName);
+  card.className = 'note-item';
+
+  const text = document.createElement('div');
+  text.className = 'note-text';
+  text.appendChild(highlight(note.content, keyword));   // 命中关键词就高亮
+  card.appendChild(text);
+
+  const meta = document.createElement('div');
+  meta.className = 'note-meta';
+  tags.forEach((t) => {
+    const chip = document.createElement('span');
+    chip.className = 'note-tag';
+    chip.appendChild(highlight('#' + t, keyword));
+    meta.appendChild(chip);
+  });
+  const time = document.createElement('span');
+  time.textContent = formatTime(note.createdAt);
+  meta.appendChild(time);
+  card.appendChild(meta);
+
+  return card;
+}
+
+/* ------------------------------------------------------------
    渲染：笔记列表
    ------------------------------------------------------------ */
 function renderNotes() {
-  const visible = getVisibleNotes();
   const kw = view.keyword.trim();
+  const visible = getVisibleNotes();
 
   el.list.innerHTML = '';
 
+  // 【状态一：加载中】【状态四：出错】—— 这两种状态不渲染列表，交给状态面板
+  if (pageState === 'loading' || pageState === 'error') {
+    el.listStatus.textContent = '';
+    el.emptyState.hidden = true;
+    el.noteCount.textContent = '';
+    renderStatePanel();
+    return;
+  }
+
+  renderStatePanel();   // 其他状态下让面板收起
+
+  // 【状态二：有数据】把每一条交给卡片组件渲染
   visible.forEach((note) => {
-    const tags = note.tags || [];
-    const li = document.createElement('li');
-    li.className = 'note-item';
-
-    const text = document.createElement('div');
-    text.className = 'note-text';
-    text.appendChild(highlight(note.content, kw));    // 命中关键词就高亮
-    li.appendChild(text);
-
-    const meta = document.createElement('div');
-    meta.className = 'note-meta';
-
-    tags.forEach((t) => {
-      const chip = document.createElement('span');
-      chip.className = 'note-tag';
-      chip.appendChild(highlight('#' + t, kw));
-      meta.appendChild(chip);
-    });
-
-    const time = document.createElement('span');
-    time.textContent = formatTime(note.createdAt);
-    meta.appendChild(time);
-
-    li.appendChild(meta);
-    el.list.appendChild(li);
+    el.list.appendChild(renderNoteCard(note, kw));
   });
 
-  // 空状态（验收 3.4：搜不到要有明确提示，不能一片空白）
+  // 【状态三：空】空状态（验收 3.4：搜不到要有明确提示，不能一片空白）
   if (visible.length === 0) {
     el.emptyState.hidden = false;
     if (notes.length === 0) {
-      el.emptyState.textContent = '还没有笔记。在上面写下第一条吧。';
+      el.emptyState.textContent = DEMO
+        ? '演示模式：这就是"一条笔记都还没有"时的样子（空状态）'
+        : '还没有笔记。在上面写下第一条吧。';
     } else if (kw) {
       el.emptyState.textContent = `没有找到和「${kw}」相关的笔记`;
     } else {
@@ -337,6 +380,65 @@ function renderNotes() {
     ? `${parts.join(' · ')}，命中 ${visible.length} 条`
     : `按时间倒序，共 ${visible.length} 条`;
   el.noteCount.textContent = notes.length > 0 ? `共 ${notes.length} 条` : '';
+}
+
+/* ------------------------------------------------------------
+   状态面板：加载中显示骨架卡片，出错显示原因和一个"重试"按钮
+   （出错状态一定要给用户一条出路，否则页面就死了）
+   ------------------------------------------------------------ */
+function renderStatePanel() {
+  const panel = el.statePanel;
+  panel.innerHTML = '';
+
+  if (pageState === 'loading') {
+    panel.hidden = false;
+    const tip = document.createElement('div');
+    tip.className = 'state-tip';
+    tip.textContent = '正在取数据…';
+    panel.appendChild(tip);
+
+    // 三条灰色骨架卡片，让用户知道"内容马上就来"
+    for (let i = 0; i < 3; i += 1) {
+      const sk = document.createElement('div');
+      sk.className = 'skeleton-card';
+      const l1 = document.createElement('span');
+      l1.className = 'sk-line sk-1';
+      const l2 = document.createElement('span');
+      l2.className = 'sk-line sk-2';
+      sk.appendChild(l1);
+      sk.appendChild(l2);
+      panel.appendChild(sk);
+    }
+    return;
+  }
+
+  if (pageState === 'error') {
+    panel.hidden = false;
+    const box = document.createElement('div');
+    box.className = 'error-box';
+
+    const title = document.createElement('div');
+    title.className = 'error-title';
+    title.textContent = '没能取到笔记';
+
+    const msg = document.createElement('div');
+    msg.className = 'error-msg';
+    msg.textContent = pageError || '未知错误';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-primary';
+    btn.textContent = '重试';
+    btn.addEventListener('click', bootstrap);
+
+    box.appendChild(title);
+    box.appendChild(msg);
+    box.appendChild(btn);
+    panel.appendChild(box);
+    return;
+  }
+
+  panel.hidden = true;
 }
 
 function renderAll() {
@@ -366,7 +468,7 @@ function pickRandomNote() {
   const picked = pool[Math.floor(Math.random() * pool.length)];
   view.lastRandomId = picked.id;
 
-  // 渲染回顾卡片（验收 4.1）
+  // 渲染回顾卡片（验收 4.1）—— 直接复用列表用的卡片组件，样式永远一致
   el.randomCard.innerHTML = '';
 
   const title = document.createElement('div');
@@ -374,23 +476,7 @@ function pickRandomNote() {
   title.textContent = '翻到一条旧笔记 · ' + formatTime(picked.createdAt);
   el.randomCard.appendChild(title);
 
-  const text = document.createElement('div');
-  text.className = 'random-text';
-  text.textContent = picked.content;
-  el.randomCard.appendChild(text);
-
-  const tags = picked.tags || [];
-  if (tags.length) {
-    const meta = document.createElement('div');
-    meta.className = 'note-meta';
-    tags.forEach((t) => {
-      const chip = document.createElement('span');
-      chip.className = 'note-tag';
-      chip.textContent = '#' + t;
-      meta.appendChild(chip);
-    });
-    el.randomCard.appendChild(meta);
-  }
+  el.randomCard.appendChild(renderNoteCard(picked, '', 'div'));
 
   el.randomCard.hidden = false;
 }
@@ -425,17 +511,46 @@ el.search.addEventListener('input', () => {
 el.randomBtn.addEventListener('click', pickRandomNote);
 
 /* ------------------------------------------------------------
-   启动
+   页面状态切换（Day 8）
    ------------------------------------------------------------ */
-function init() {
-  loadNotes();
+function setPageState(next, errorMsg = '') {
+  pageState = next;
+  pageError = errorMsg;
   renderAll();
+}
+
+/* ------------------------------------------------------------
+   启动：两种数据来源
+   - 演示模式（网址带 ?demo=1）：用 mock-data.js 的假数据，可预览四种状态
+   - 正常模式：用浏览器本地存储里的真实笔记（Day 7 的逻辑不变）
+   ------------------------------------------------------------ */
+function bootstrap() {
   updateCounter();
   el.input.focus();                                      // 验收 1.1
+
+  if (DEMO) {
+    el.demoBanner.hidden = false;
+    const forced = urlParams.get('state') || 'success';
+
+    setPageState('loading');                             // 先让用户看到"加载中"
+    fetchMockNotes(forced).then((res) => {
+      if (!res.ok) {
+        setPageState('error', res.message);              // 出错：说明原因 + 给"重试"
+        return;
+      }
+      notes = res.notes;
+      setPageState(notes.length > 0 ? 'success' : 'empty');
+    });
+    return;
+  }
+
+  // 正常模式：数据在本地，同步就能取到，所以不存在"加载中"这一态
+  loadNotes();
+  setPageState(notes.length > 0 ? 'success' : 'empty');
 
   if (!storageAvailable) {
     showHint('当前浏览器不允许本地存储（可能是隐私模式），记录不会被保留', true, 0);
   }
 }
 
-init();
+bootstrap();

@@ -190,6 +190,65 @@ mark { background: #faeeda; color: var(--amber); border-radius: 3px; padding: 0 
 .random-card .random-title { font-size: 12px; color: var(--amber); margin-bottom: 6px; }
 .random-card .random-text { white-space: pre-wrap; word-break: break-word; }
 
+/* ---------- Day 8：演示模式提示条 ---------- */
+.demo-banner {
+  background: var(--blue-bg);
+  border: 1px solid #b5d4f4;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: #0c447c;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.demo-banner .demo-links { font-size: 12px; }
+.demo-banner a { color: var(--blue); text-decoration: none; margin-left: 8px; }
+.demo-banner a:hover { text-decoration: underline; }
+
+/* ---------- Day 8：加载中 / 出错 状态面板 ---------- */
+.state-panel { margin-bottom: 10px; }
+.state-tip { font-size: 12px; color: var(--text-faint); margin-bottom: 8px; }
+
+/* 骨架卡片：灰条占位，让"还在加载"这件事看得见 */
+.skeleton-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 10px;
+}
+.sk-line {
+  display: block;
+  height: 10px;
+  border-radius: 5px;
+  background: #eeede8;
+}
+.sk-1 { width: 70%; margin-bottom: 8px; }
+.sk-2 { width: 40%; }
+
+/* 出错状态：说明原因 + 一个重试按钮 */
+.error-box {
+  background: #fdf4f4;
+  border: 1px solid #f0c9c9;
+  border-left: 4px solid #d9615f;
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.error-title { font-size: 14px; color: var(--red); margin-bottom: 4px; }
+.error-msg { font-size: 13px; color: var(--text-weak); margin-bottom: 10px; }
+
+/* ---------- 翻一翻卡片里复用的笔记卡片：去掉重复的边框与底色 ---------- */
+.random-card .note-item {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
 /* ---------- 手机上的粗略适配（不做专门优化，PRD 第 5 节）---------- */
 @media (max-width: 720px) {
   .layout { flex-direction: column; }

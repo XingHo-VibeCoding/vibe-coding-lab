@@ -14,6 +14,19 @@
   </header>
 
   <main class="app-main">
+    <!-- ===== 演示模式提示条（只在网址带 ?demo=1 时显示，Day 8）===== -->
+    <div id="demo-banner" class="demo-banner" hidden>
+      <span class="demo-title">演示模式：当前显示的是本地假数据</span>
+      <span class="demo-links">
+        四种页面状态预览：
+        <a href="?demo=1&amp;state=loading">加载中</a>
+        <a href="?demo=1&amp;state=success">有数据</a>
+        <a href="?demo=1&amp;state=empty">空</a>
+        <a href="?demo=1&amp;state=error">出错</a>
+        <a href="./">退出演示</a>
+      </span>
+    </div>
+
     <!-- ===== 写笔记（F1）===== -->
     <section class="composer">
       <textarea id="note-input" rows="3"
@@ -41,6 +54,10 @@
       <!-- ===== 笔记列表 ===== -->
       <section class="list-area">
         <div id="list-status" class="list-status"></div>
+
+        <!-- 加载中 / 出错 两种状态的面板（Day 8）-->
+        <div id="state-panel" class="state-panel" hidden></div>
+
         <ul id="note-list" class="note-list"></ul>
         <p id="empty-state" class="empty-state">还没有笔记。在上面写下第一条吧。</p>
       </section>
@@ -50,6 +67,7 @@
     <div id="random-card" class="random-card" hidden></div>
   </main>
 
+  <script src="mock-data.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
