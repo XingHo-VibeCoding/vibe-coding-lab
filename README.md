@@ -108,11 +108,12 @@ vibe-coding-lab/
 ├── PRD.md            Day 4                     需求文档（五个功能 + 26 条验收标准）
 ├── TECH_DESIGN.md    Day 5                     技术方案（纯前端路线 + 数据流图）
 ├── index.html        Day 2 占位页 → Day 7 重写  页面结构
-├── styles.css        Day 7 新建                样式
-├── app.js            Day 7 新建                全部逻辑（Day 8 加四态与卡片组件）
+├── styles.css        Day 7 新建 / Day 9 修改   样式（Day 9 按 6 条设计规则审查修复）
+├── app.js            Day 7 新建 / Day 9 修改   全部逻辑（Day 8 四态与卡片组件；Day 9 标签名包 span、骨架卡补第三条线）
 ├── mock-data.js      Day 8 新建                假数据与"假接口"（第 3 周换真实接口）
 ├── README.md         Day 7 新建                本文件（运行说明）
 ├── CANDIDATES.md     Day 8 新建                下期候选清单（新想法的唯一去处）
+├── DESIGN_REVIEW.md  Day 9 新建                设计审查：规则、问题、修复对照
 └── .gitignore        Day 2                     忽略规则（.env 不上传）
 ```
 

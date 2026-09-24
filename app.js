@@ -7,6 +7,7 @@
      第 2 步 ✅ F2 标签归类、F3 关键词搜索
      第 3 步 ✅ F4 随机回顾
      Day 8  ✅ 主视图四态（加载中 / 有数据 / 空 / 出错）+ 可复用卡片组件 + 演示模式
+     Day 9  ✅ 设计审查修复：标签名包一层 .tag-label（长名省略号）、骨架卡补第三条灰线
    ============================================================ */
 
 const STORAGE_KEY = 'notelab.notes.v1';  // 存储键，见 TECH_DESIGN 第 6 节
@@ -247,7 +248,11 @@ function renderTagList() {
   const allBtn = document.createElement('button');
   allBtn.type = 'button';
   allBtn.className = 'tag-item' + (view.activeTag === null ? ' active' : '');
-  allBtn.textContent = '全部';
+  // Day 9：标签名单独包一层 span，长标签名才能用省略号收住（样式里的 .tag-label）
+  const allLabel = document.createElement('span');
+  allLabel.className = 'tag-label';
+  allLabel.textContent = '全部';
+  allBtn.appendChild(allLabel);
   const allCount = document.createElement('span');
   allCount.className = 'count';
   allCount.textContent = notes.length;
@@ -265,7 +270,10 @@ function renderTagList() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'tag-item' + (view.activeTag === tag ? ' active' : '');
-    btn.textContent = '#' + tag;
+    const tagLabel = document.createElement('span');      // Day 9：包一层，便于省略号
+    tagLabel.className = 'tag-label';
+    tagLabel.textContent = '#' + tag;
+    btn.appendChild(tagLabel);
     const cnt = document.createElement('span');
     cnt.className = 'count';
     cnt.textContent = count;
@@ -284,7 +292,10 @@ function renderTagList() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'tag-item' + (view.activeTag === NO_TAG ? ' active' : '');
-    btn.textContent = '无标签';
+    const noTagLabel = document.createElement('span');    // Day 9：包一层，便于省略号
+    noTagLabel.className = 'tag-label';
+    noTagLabel.textContent = '无标签';
+    btn.appendChild(noTagLabel);
     const cnt = document.createElement('span');
     cnt.className = 'count';
     cnt.textContent = noTagCount;
@@ -397,7 +408,8 @@ function renderStatePanel() {
     tip.textContent = '正在取数据…';
     panel.appendChild(tip);
 
-    // 三条灰色骨架卡片，让用户知道"内容马上就来"
+    // 三条灰线：对应真实卡片的"正文两行 + 元信息一行"（Day 9 补第三条，
+    // 让骨架卡的高度接近真实卡片，切到"有数据"时页面不跳）
     for (let i = 0; i < 3; i += 1) {
       const sk = document.createElement('div');
       sk.className = 'skeleton-card';
@@ -405,8 +417,11 @@ function renderStatePanel() {
       l1.className = 'sk-line sk-1';
       const l2 = document.createElement('span');
       l2.className = 'sk-line sk-2';
+      const l3 = document.createElement('span');
+      l3.className = 'sk-line sk-3';
       sk.appendChild(l1);
       sk.appendChild(l2);
+      sk.appendChild(l3);
       panel.appendChild(sk);
     }
     return;

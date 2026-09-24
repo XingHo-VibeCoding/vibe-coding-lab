@@ -1,23 +1,55 @@
 /* ============================================================
    随手笔记 NoteLab —— 样式
    约束（TECH_DESIGN 第 7 节）：不引任何 CDN 字体、图标库，只用系统字体
+
+   Day 9 设计规则（本次前端审查的依据，共 6 条）
+     R1 对比度：普通文字 ≥ 4.5:1；界面控件的边界 ≥ 3:1（WCAG 2.1 AA）
+     R2 文字分三级就够（主 / 次 / 弱），但三级都必须过 R1
+     R3 间距只用 4px 网格（--space-*），不写 7px / 9px / 14px 这类随手值
+     R4 对齐：同一栏里的文字，左边缘要落在同一条竖线上
+     R5 焦点：键盘 Tab 能到的元素，必须看得见焦点
+     R6 溢出：任何长度的内容都不能撑破它所在的卡片
+
+   6 条怎么来的：R1 有客观标准（算得出比值），R2/R3/R4 是"一致"，
+   R5/R6 是"边界情况不能塌"。四类合起来才叫"像个正经产品"。
    ============================================================ */
 
 :root {
-  --bg: #f7f7f5;          /* 页面底色 */
-  --card: #ffffff;        /* 卡片底色 */
-  --border: #e5e3dc;      /* 描边 */
-  --text: #2c2c2a;        /* 主文字 */
-  --text-weak: #6b6a66;   /* 次要文字 */
-  --text-faint: #9a9893;  /* 更弱的提示文字 */
-  --blue: #185fa5;        /* 主色：蓝 */
+  /* ---------- 颜色 ---------- */
+  --bg: #f7f7f5;            /* 页面底色 */
+  --card: #ffffff;          /* 卡片底色 */
+  --border: #e5e3dc;        /* 容器描边：卡片、面板。属装饰，可以淡 */
+  --border-strong: #8f8c85; /* 交互控件描边：搜索框、按钮。Day 9 新增，3.13:1 */
+
+  /* 文字三级。括号里是改后的实测对比度（Day 9 用脚本算的，不是眼睛看的） */
+  --text: #2c2c2a;          /* 主文字    13.99:1 */
+  --text-weak: #5a5852;     /* 次要文字   7.11:1  Day 9 由 #6b6a66 压深 */
+  --text-faint: #706e68;    /* 更弱提示   5.10:1  Day 9 由 #9a9893 压深（原 2.88:1，不达标） */
+
+  --blue: #185fa5;          /* 主色：蓝 */
   --blue-bg: #e6f1fb;
-  --teal: #0f6e56;        /* 辅色：青，用于标签 */
+  --teal: #0f6e56;          /* 辅色：青，用于标签 */
   --teal-bg: #e1f5ee;
-  --amber-bg: #faeeda;    /* 提醒底色 */
+  --amber-bg: #faeeda;      /* 提醒底色 */
   --amber: #854f0b;
-  --red: #a32d2d;         /* 错误提示 */
-  --radius: 10px;
+  --red: #a32d2d;           /* 错误提示 */
+
+  /* ---------- 间距：统一到 4px 网格（R3）---------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* ---------- 圆角：收敛到三档 ---------- */
+  --radius: 10px;           /* 卡片、面板 */
+  --radius-sm: 8px;         /* 按钮、输入框、标签行 */
+  --radius-pill: 999px;     /* 标签胶囊、骨架灰条 */
+
+  /* 极淡的卡片阴影：让白卡片从浅底上"浮"起来一点（补容器描边的淡） */
+  --shadow-card: 0 1px 2px rgba(44, 44, 42, .06);
 }
 
 * { box-sizing: border-box; }
@@ -31,28 +63,37 @@ body {
   line-height: 1.6;
 }
 
+/* ---------- R5：键盘焦点必须看得见 ---------- */
+/* 为什么必须单独写：浏览器默认的焦点圈会被 outline: none 之类抹掉，
+   而鼠标点击时又不需要焦点圈，所以用 :focus-visible（只在键盘操作时出现）*/
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
 /* ---------- 顶部标题 ---------- */
 .app-header {
-  padding: 18px 24px 12px;
+  padding: var(--space-4) var(--space-6) var(--space-3);
   border-bottom: 1px solid var(--border);
   background: var(--card);
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 .app-title { font-size: 18px; font-weight: 600; margin: 0; }
 .app-sub { font-size: 12px; color: var(--text-faint); }
 .note-count { margin-left: auto; font-size: 12px; color: var(--text-weak); }
 
-.app-main { max-width: 980px; margin: 0 auto; padding: 20px 24px 60px; }
+.app-main { max-width: 980px; margin: 0 auto; padding: var(--space-5) var(--space-6) 64px; }
 
 /* ---------- 输入区 ---------- */
 .composer {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: var(--space-4);
+  box-shadow: var(--shadow-card);
 }
 .composer textarea {
   width: 100%;
@@ -70,8 +111,8 @@ body {
 .composer-footer {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding-top: 10px;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
   border-top: 1px dashed var(--border);
 }
 .hint { font-size: 12px; color: var(--amber); flex: 1; }
@@ -79,90 +120,116 @@ body {
 .counter { font-size: 12px; color: var(--text-faint); }
 
 /* ---------- 按钮 ---------- */
+/* 高度：13px 文字 × 1.6 行高 + 8px×2 内边距 + 1px×2 边框 ≈ 39px，
+   和搜索框完全一致（R4：并排的控件高度要一样）*/
 .btn-primary, .btn-ghost {
   font: inherit;
   font-size: 13px;
-  border-radius: 8px;
-  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-4);
   cursor: pointer;
   border: 1px solid transparent;
 }
 .btn-primary { background: var(--blue); color: #fff; }
 .btn-primary:hover { background: #124a80; }
-.btn-ghost { background: var(--card); border-color: var(--border); color: var(--text-weak); }
+/* Day 9：边框由 --border(1.28:1，几乎看不见) 换成 --border-strong(3.36:1)，
+   否则"翻一翻"看起来像一段文字而不是一个按钮 */
+.btn-ghost { background: var(--card); border-color: var(--border-strong); color: var(--text-weak); }
 .btn-ghost:hover { border-color: var(--blue); color: var(--blue); }
 
 /* ---------- 工具条（搜索 + 翻一翻）---------- */
-.toolbar { display: flex; gap: 10px; margin: 16px 0; }
+.toolbar { display: flex; gap: var(--space-3); margin: var(--space-4) 0; }
 .toolbar input[type="search"] {
   flex: 1;
+  min-width: 0;            /* R6：不加这句，窄屏上输入框不肯收缩，会把按钮挤出屏幕 */
   font: inherit;
-  padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   background: var(--card);
   outline: none;
 }
 .toolbar input[type="search"]:focus { border-color: var(--blue); }
 
 /* ---------- 两栏布局 ---------- */
-.layout { display: flex; gap: 20px; align-items: flex-start; }
+.layout { display: flex; gap: var(--space-5); align-items: flex-start; }
 .sidebar {
   width: 190px;
   flex: 0 0 190px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 12px;
+  padding: var(--space-3);
+  box-shadow: var(--shadow-card);
 }
+/* R4 的具体一处：下面 .tag-item 的文字左边缘 = 侧栏内边距 12 + 行描边 1 + 行内边距 8 = 21px。
+   所以标题也要补到 21px（12 + 9），否则标题和标签差 9px，整栏看着"松" */
 .sidebar-title {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-faint);
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-2);
+  padding-left: 9px;
   letter-spacing: 1px;
 }
 .tag-list { list-style: none; margin: 0; padding: 0; }
-.tag-list li { margin-bottom: 4px; }
+.tag-list li { margin-bottom: var(--space-1); }
 .tag-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--space-2);
   width: 100%;
   font: inherit;
   font-size: 13px;
   text-align: left;
-  padding: 5px 8px;
+  padding: var(--space-2);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-weak);
   cursor: pointer;
 }
 .tag-item:hover { background: var(--teal-bg); color: var(--teal); }
 .tag-item.active { background: var(--teal-bg); color: var(--teal); border-color: #9fe1cb; }
-.tag-item .count { font-size: 12px; color: var(--text-faint); }
+/* R6：标签名太长时用省略号收住，不许把右边的计数挤出去 */
+.tag-item .tag-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-item .count { flex: 0 0 auto; font-size: 12px; color: var(--text-faint); }
+/* 选中态底色是浅青，普通的 --text-faint 在它上面只有 4.49:1，差一点点，
+   所以选中时计数改用 --teal（5.46:1）*/
+.tag-item.active .count { color: var(--teal); }
 
 /* ---------- 笔记列表 ---------- */
+/* ------------------------------------------------------------
+   组件约束：笔记卡片 .note-item（Day 9 加练）
+   把"视觉规则"写成约束、而不是一次性的数值 —— 以后加卡片新元素时照抄这几条：
+
+   R2 卡片里的次级文字（时间戳、标签计数）只能用 --text-faint / --text-weak / --text
+      这三档，不许再写死一个浅灰。Day 9 之前就是写死 #9a9893，只有 2.88:1。
+   R3 卡片内边距只能用 --space-3 / --space-4。改密度就整块改，
+      否则"加载中的骨架卡"和"真实卡片"会错位，切换时整页跳一下。
+   R6 卡片里任何一段内容都要能断行，长标签、长链接都不许撑破卡片。
+   ------------------------------------------------------------ */
 .list-area { flex: 1; min-width: 0; }
-.list-status { font-size: 12px; color: var(--text-weak); margin-bottom: 8px; }
+.list-status { font-size: 12px; color: var(--text-weak); margin-bottom: var(--space-2); }
 .note-list { list-style: none; margin: 0; padding: 0; }
 .note-item {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 12px 14px;
-  margin-bottom: 10px;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+  box-shadow: var(--shadow-card);
 }
 .note-item .note-text {
   white-space: pre-wrap;   /* 保留换行（Enter 换行）*/
-  word-break: break-word;
+  word-break: break-word;  /* R6 */
 }
 .note-item .note-meta {
-  margin-top: 8px;
+  margin-top: var(--space-2);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
   font-size: 12px;
   color: var(--text-faint);
@@ -170,24 +237,26 @@ body {
 .note-tag {
   background: var(--teal-bg);
   color: var(--teal);
-  border-radius: 999px;
-  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-2);
   font-size: 12px;
+  max-width: 100%;             /* R6：超长标签不许溢出卡片 */
+  overflow-wrap: anywhere;
 }
 mark { background: #faeeda; color: var(--amber); border-radius: 3px; padding: 0 2px; }
 
-.empty-state { color: var(--text-faint); text-align: center; padding: 30px 0; font-size: 13px; }
+.empty-state { color: var(--text-faint); text-align: center; padding: var(--space-8) 0; font-size: 13px; }
 
 /* ---------- 翻一翻卡片 ---------- */
 .random-card {
-  margin-top: 20px;
+  margin-top: var(--space-5);
   background: #fffdf6;
   border: 1px solid #efd9a8;
   border-left: 4px solid #d8a13a;
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: var(--space-4);
 }
-.random-card .random-title { font-size: 12px; color: var(--amber); margin-bottom: 6px; }
+.random-card .random-title { font-size: 12px; color: var(--amber); margin-bottom: var(--space-2); }
 .random-card .random-text { white-space: pre-wrap; word-break: break-word; }
 
 /* ---------- Day 8：演示模式提示条 ---------- */
@@ -195,40 +264,46 @@ mark { background: #faeeda; color: var(--amber); border-radius: 3px; padding: 0 
   background: var(--blue-bg);
   border: 1px solid #b5d4f4;
   border-radius: var(--radius);
-  padding: 10px 14px;
-  margin-bottom: 16px;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
   font-size: 13px;
   color: #0c447c;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 .demo-banner .demo-links { font-size: 12px; }
-.demo-banner a { color: var(--blue); text-decoration: none; margin-left: 8px; }
+.demo-banner a { color: var(--blue); text-decoration: none; margin-left: var(--space-2); }
 .demo-banner a:hover { text-decoration: underline; }
 
 /* ---------- Day 8：加载中 / 出错 状态面板 ---------- */
-.state-panel { margin-bottom: 10px; }
-.state-tip { font-size: 12px; color: var(--text-faint); margin-bottom: 8px; }
+.state-panel { margin-bottom: var(--space-3); }
+.state-tip { font-size: 12px; color: var(--text-faint); margin-bottom: var(--space-2); }
 
-/* 骨架卡片：灰条占位，让"还在加载"这件事看得见 */
+/* 骨架卡片：灰条占位，让"还在加载"这件事看得见
+   内边距故意和 .note-item 完全一致（--space-3 / --space-4），
+   高度也对齐一条单行笔记（12 + 22.4 + 8 + 19.2 + 12 ≈ 74），
+   这样从"加载中"切到"有数据"时页面不会跳 */
 .skeleton-card {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px;
-  margin-bottom: 10px;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+  min-height: 74px;
 }
 .sk-line {
   display: block;
   height: 10px;
-  border-radius: 5px;
-  background: #eeede8;
+  border-radius: var(--radius-pill);
+  background: #e4e1d9;    /* Day 9：由 #eeede8(1.17:1，几乎看不见) 加到 1.31:1 */
+  margin-bottom: var(--space-2);
 }
-.sk-1 { width: 70%; margin-bottom: 8px; }
-.sk-2 { width: 40%; }
+.sk-1 { width: 100%; }      /* 正文第一行 */
+.sk-2 { width: 62%; }       /* 正文第二行 */
+.sk-3 { width: 24%; margin-bottom: 0; }   /* 元信息行（时间戳那段） */
 
 /* 出错状态：说明原因 + 一个重试按钮 */
 .error-box {
@@ -236,10 +311,10 @@ mark { background: #faeeda; color: var(--amber); border-radius: 3px; padding: 0 
   border: 1px solid #f0c9c9;
   border-left: 4px solid #d9615f;
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: var(--space-4);
 }
-.error-title { font-size: 14px; color: var(--red); margin-bottom: 4px; }
-.error-msg { font-size: 13px; color: var(--text-weak); margin-bottom: 10px; }
+.error-title { font-size: 14px; color: var(--red); margin-bottom: var(--space-1); }
+.error-msg { font-size: 13px; color: var(--text-weak); margin-bottom: var(--space-3); }
 
 /* ---------- 翻一翻卡片里复用的笔记卡片：去掉重复的边框与底色 ---------- */
 .random-card .note-item {
@@ -247,11 +322,12 @@ mark { background: #faeeda; color: var(--amber); border-radius: 3px; padding: 0 
   border: none;
   padding: 0;
   margin: 0;
+  box-shadow: none;
 }
 
 /* ---------- 手机上的粗略适配（不做专门优化，PRD 第 5 节）---------- */
 @media (max-width: 720px) {
   .layout { flex-direction: column; }
   .sidebar { width: 100%; flex: none; }
-  .app-main { padding: 16px 14px 40px; }
+  .app-main { padding: var(--space-4) 14px 40px; }
 }
