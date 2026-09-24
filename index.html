@@ -23,7 +23,10 @@
         <a href="?demo=1&amp;state=success">有数据</a>
         <a href="?demo=1&amp;state=empty">空</a>
         <a href="?demo=1&amp;state=error">出错</a>
-        <a href="./">退出演示</a>
+        <!-- 注意：这里必须写 index.html，不能写 ./ 。
+             ./ 指的是"当前目录"，用文件方式打开（file://）时会变成文件夹本身，
+             浏览器就会显示文件夹内容，而不是回到页面。 -->
+        <a href="index.html">退出演示</a>
       </span>
     </div>
 
