@@ -112,6 +112,7 @@ vibe-coding-lab/
 ├── app.js            Day 7 新建                全部逻辑（Day 8 加四态与卡片组件）
 ├── mock-data.js      Day 8 新建                假数据与"假接口"（第 3 周换真实接口）
 ├── README.md         Day 7 新建                本文件（运行说明）
+├── CANDIDATES.md     Day 8 新建                下期候选清单（新想法的唯一去处）
 └── .gitignore        Day 2                     忽略规则（.env 不上传）
 ```
 
