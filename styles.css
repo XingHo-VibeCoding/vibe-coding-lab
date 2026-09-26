@@ -274,6 +274,12 @@ mark { background: #faeeda; color: var(--amber); border-radius: 3px; padding: 0 
   gap: var(--space-3);
   flex-wrap: wrap;
 }
+/* Day 10 修的真 bug：上面那句 display: flex 会盖掉元素自带的 hidden 属性。
+   浏览器默认样式里 [hidden] 等于 display:none，但**作者写样式优先级高于浏览器默认样式**
+   （跟选择器权重无关），所以正常模式下 app.js 永远藏不住它 ——
+   提示条一直在说"当前显示的是本地假数据"，等于对用户撒谎。
+   补一条权重更高的兜底：只要带 hidden 就隐藏。 */
+.demo-banner[hidden] { display: none; }
 .demo-banner .demo-links { font-size: 12px; }
 .demo-banner a { color: var(--blue); text-decoration: none; margin-left: var(--space-2); }
 .demo-banner a:hover { text-decoration: underline; }
