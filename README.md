@@ -114,6 +114,7 @@ vibe-coding-lab/
 ├── README.md         Day 7 新建                本文件（运行说明）
 ├── CANDIDATES.md     Day 8 新建                下期候选清单（新想法的唯一去处）
 ├── DESIGN_REVIEW.md  Day 9 新建                设计审查：规则、问题、修复对照
+├── skills/notelab-filter-check/  Day 12 新建   筛选交互自检 Skill（SKILL.md + run.js + RUNLOG.md）
 └── .gitignore        Day 2                     忽略规则（.env 不上传）
 ```
 
@@ -133,6 +134,8 @@ vibe-coding-lab/
 5. 单个文件超过 500 行就拆开
 6. **改样式必须过对比度门槛**（Day 9 起）：普通文字 ≥ 4.5:1，按钮和输入框的边框 ≥ 3:1。
    规则、算法和自检小脚本见 `DESIGN_REVIEW.md`——加新颜色前先算，别靠眼睛估
+7. **改了筛选相关代码先跑回归**（Day 12 起）：`node skills/notelab-filter-check/run.js`
+   三种情况全 PASS 再提交，调用记录自动留在 `skills/notelab-filter-check/RUNLOG.md`
 
 ---
 
