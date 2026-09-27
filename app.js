@@ -172,7 +172,8 @@ const el = {
   recentList: document.getElementById('recent-list'),     // 「写笔记」里的最近 3 条
   recentTip: document.getElementById('recent-tip'),
   recentEmpty: document.getElementById('recent-empty'),
-  reviewStatus: document.getElementById('review-status')  // 「回顾」视图的数据状态提示
+  reviewStatus: document.getElementById('review-status'), // 「回顾」视图的数据状态提示
+  demoEntry: document.getElementById('demo-entry')        // 「全部笔记」里进演示模式的入口
 };
 
 function showHint(text, isError = false, duration = 3000) {
@@ -677,6 +678,9 @@ function bootstrap() {
 
   if (DEMO) {
     el.demoBanner.hidden = false;
+    // Day 13 修：已经在演示模式里了，提示条上就有四种状态的切换，
+    // 「全部笔记」里那个入口留着只会让人困惑，收起来。
+    el.demoEntry.hidden = true;
     const forced = urlParams.get('state') || 'success';
 
     setPageState('loading');                             // 先让用户看到"加载中"

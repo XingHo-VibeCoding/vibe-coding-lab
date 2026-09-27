@@ -370,6 +370,18 @@ mark { background: #faeeda; color: var(--amber); border-radius: 3px; padding: 0 
 .view-more { margin: var(--space-3) 0 0; font-size: 13px; }
 .view-more a { color: var(--blue); }
 
+/* Day 13 修：四种状态的入口。
+   只在「全部笔记」视图、且还没进演示模式时出现（进了演示模式由 app.js 收起）。
+   注意这里同样**不给它写 display** —— 它要靠 hidden 属性收起来。 */
+.demo-entry {
+  margin: var(--space-5) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px dashed var(--border);
+  font-size: 13px;
+  color: var(--text-weak);
+}
+.demo-entry a { color: var(--blue); }
+
 /* 「写笔记」视图里的最近 3 条 */
 .recent { margin-top: var(--space-5); }
 .recent-title {

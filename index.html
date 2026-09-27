@@ -94,6 +94,15 @@
 
           <ul id="note-list" class="note-list"></ul>
           <p id="empty-state" class="empty-state">还没有笔记。在上面写下第一条吧。</p>
+
+          <!-- Day 13 修：列表的四种状态（加载中 / 有数据 / 空 / 出错）原来**只能靠手打网址参数**
+               ?demo=1&state=… 才能看到，页面上没有任何入口 —— 功能在，但用户走不到，
+               等于"全部笔记上没有四种状态"。这里在状态所在的位置补一个常驻入口。
+               进了演示模式后，顶部提示条上就能直接切换四种状态，这句会自己收起来。 -->
+          <p id="demo-entry" class="demo-entry">
+            想看这一页在「加载中 / 空 / 出错」时分别长什么样？
+            <a href="?demo=1&amp;state=success#/notes">打开演示模式 →</a>
+          </p>
         </section>
       </div>
     </section>
