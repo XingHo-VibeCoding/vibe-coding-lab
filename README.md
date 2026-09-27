@@ -44,19 +44,30 @@ http://localhost:8123/
 
 ## 二、怎么用（对照 PRD 的五个功能）
 
+页面分成**三个视图**（Day 13 新增），顶部导航栏切换：
+
+| 视图 | 干什么 |
+|---|---|
+| **写笔记** `#/write` | 输入框 + 最近的 3 条笔记（刚保存的会立刻出现在这里） |
+| **所有笔记** `#/notes` | 搜索框 + 标签筛选 + 完整笔记列表 |
+| **翻一翻** `#/review` | 随机翻出一条旧笔记来回顾 |
+
 | 功能 | 怎么用 |
 |---|---|
-| **F1 写笔记** | 打开页面光标就在输入框里，直接打字；按 `Ctrl + Enter` 或点「保存」 |
-| **F2 标签归类** | 正文里写 `#标签`（例如 `#想法`），保存后自动归类；点左侧标签可筛选，再点一次取消。标签区分大小写，一条最多 5 个 |
-| **F3 关键词搜索** | 顶部搜索框输入即筛选，正文和标签都能搜到，命中的词会高亮 |
-| **F4 随机回顾** | 点「翻一翻」，随机翻出一条旧笔记（笔记少于 3 条时会提示先多记几条） |
+| **F1 写笔记** | 打开页面默认在「写笔记」，光标就在输入框里，直接打字；按 `Ctrl + Enter` 或点「保存」 |
+| **F2 标签归类** | 正文里写 `#标签`（例如 `#想法`），保存后自动归类；去「所有笔记」点左侧标签可筛选，再点一次取消。标签区分大小写，一条最多 5 个 |
+| **F3 关键词搜索** | 去「所有笔记」，在搜索框输入即筛选，正文和标签都能搜到，命中的词会高亮 |
+| **F4 随机回顾** | 去「翻一翻」点按钮，随机翻出一条旧笔记（笔记少于 3 条时会提示先多记几条） |
 | **F5 本地保存** | 自动保存，关掉浏览器再打开笔记还在；不需要登录 |
+
+> 切换视图时地址栏会跟着变（`#/write`、`#/notes`、`#/review`），
+> 所以浏览器**后退/前进按钮能用**，可以把「上一个视图」当一次返回。细节见 `TECH_DESIGN.md` 第 7.1 节。
 
 ---
 
-## 三、演示模式与四种页面状态（Day 8 新增）
+## 三、演示模式与四种页面状态（Day 8 新增 / Day 13 跟随列表搬到「所有笔记」视图）
 
-页面主体有四种状态，任何一种都不能少：
+四种状态挂在**笔记列表**上，所以看这四种状态要去「所有笔记」视图：
 
 | 状态 | 什么时候出现 | 页面表现 |
 |---|---|---|
@@ -65,14 +76,18 @@ http://localhost:8123/
 | **空** | 取数成功但一条都没有 | 一句明确的话，告诉用户下一步做什么 |
 | **出错** | 取数失败 | 说明失败原因 + 一个「重试」按钮 |
 
-本地预览这四种状态（网址后面加参数即可）：
+本地预览这四种状态（网址后面加参数，末尾 `#/notes` 表示直接落在「所有笔记」视图）：
 
 ```
-http://localhost:8123/?demo=1&state=loading    加载中
-http://localhost:8123/?demo=1&state=success    有数据
-http://localhost:8123/?demo=1&state=empty      空
-http://localhost:8123/?demo=1&state=error      出错
+http://localhost:8123/?demo=1&state=loading#/notes    加载中
+http://localhost:8123/?demo=1&state=success#/notes    有数据
+http://localhost:8123/?demo=1&state=empty#/notes      空
+http://localhost:8123/?demo=1&state=error#/notes      出错
 ```
+
+> 参数和 `#` 的顺序不能反：查询参数在前、`#` 在后。
+> 如果只写 `?demo=1&state=error` 不加 `#/notes`，会先落在「写笔记」视图，
+> 点一下顶部「所有笔记」就能看到出错状态。
 
 - `?demo=1` 表示**演示模式**：数据来自 `mock-data.js` 的 10 条假笔记，不会写入你的真实笔记
 - 不加 `?demo=1` 就是正常模式，用你自己记录的真实数据
@@ -103,19 +118,19 @@ http://localhost:8123/?demo=1&state=error      出错
 
 ```
 vibe-coding-lab/
-├── AGENTS.md         Day 1 创建 / Day 6 追加   项目规则（给 AI 看的协作约定）
-├── research.md       Day 3                     需求研究（三个同类产品对比）
-├── PRD.md            Day 4                     需求文档（五个功能 + 26 条验收标准）
-├── TECH_DESIGN.md    Day 5                     技术方案（纯前端路线 + 数据流图）
-├── index.html        Day 2 占位页 → Day 7 重写  页面结构
-├── styles.css        Day 7 新建 / Day 9 修改   样式（Day 9 按 6 条设计规则审查修复）
-├── app.js            Day 7 新建 / Day 9 修改   全部逻辑（Day 8 四态与卡片组件；Day 9 标签名包 span、骨架卡补第三条线）
-├── mock-data.js      Day 8 新建                假数据与"假接口"（第 3 周换真实接口）
-├── README.md         Day 7 新建                本文件（运行说明）
-├── CANDIDATES.md     Day 8 新建                下期候选清单（新想法的唯一去处）
-├── DESIGN_REVIEW.md  Day 9 新建                设计审查：规则、问题、修复对照
-├── skills/notelab-filter-check/  Day 12 新建   筛选交互自检 Skill（SKILL.md + run.js + RUNLOG.md）
-└── .gitignore        Day 2                     忽略规则（.env 不上传）
+├── AGENTS.md         Day 1 创建 / Day 6 追加         项目规则（给 AI 看的协作约定）
+├── research.md       Day 3                           需求研究（三个同类产品对比）
+├── PRD.md            Day 4                           需求文档（五个功能 + 26 条验收标准）
+├── TECH_DESIGN.md    Day 5 创建 / Day 13 追加 §7.1    技术方案（纯前端路线 + 数据流图 + 视图切换选型）
+├── index.html        Day 2 占位页 → Day 7 重写 → Day 13 拆三视图   页面结构
+├── styles.css        Day 7 新建 / Day 9 审查 / Day 13   样式（Day 9 按 6 条设计规则审查修复；Day 13 加导航与视图样式）
+├── app.js            Day 7 新建 / 后续多次           全部逻辑（Day 8 四态与卡片；Day 9 标签与骨架；Day 13 hash 路由与三视图）
+├── mock-data.js      Day 8 新建                      假数据与"假接口"（第 3 周换真实接口）
+├── README.md         Day 7 新建 / 后续多次           本文件（运行说明）
+├── CANDIDATES.md     Day 8 新建                      下期候选清单（新想法的唯一去处）
+├── DESIGN_REVIEW.md  Day 9 新建                      设计审查：规则、问题、修复对照
+├── skills/notelab-filter-check/  Day 12 新建 / Day 13 扩充   自检 Skill（SKILL.md + run.js + RUNLOG.md）
+└── .gitignore        Day 2                           忽略规则（.env 不上传）
 ```
 
 ### 数据流（一句话）
@@ -136,6 +151,12 @@ vibe-coding-lab/
    规则、算法和自检小脚本见 `DESIGN_REVIEW.md`——加新颜色前先算，别靠眼睛估
 7. **改了筛选相关代码先跑回归**（Day 12 起）：`node skills/notelab-filter-check/run.js`
    三种情况全 PASS 再提交，调用记录自动留在 `skills/notelab-filter-check/RUNLOG.md`
+8. **视图切换只用 `#` 哈希**（Day 13 起）：不要引入 History API 或路由库，
+   也不要给 `.view` 写 `display`（会盖掉 `[hidden]`，Day 10 已经踩过这个坑）
+9. **状态断言要过滤元素**（Day 13 起）：数"有几张卡片"时先按 class 过滤，
+   别直接数 `children.length`（面板里除了卡片还有一行提示，会数错）
+
+> 已知欠账：`app.js` 已经超过约束 5 的 500 行，拆分方案记在 `CANDIDATES.md` 的 C7，本期先不动。
 
 ---
 

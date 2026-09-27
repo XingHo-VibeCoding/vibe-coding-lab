@@ -117,6 +117,7 @@ body {
 }
 .hint { font-size: 12px; color: var(--amber); flex: 1; }
 .hint.error { color: var(--red); }
+.hint.ok { color: var(--teal); }        /* Day 13：成功提示（已保存）*/
 .counter { font-size: 12px; color: var(--text-faint); }
 
 /* ---------- 按钮 ---------- */
@@ -331,9 +332,73 @@ mark { background: #faeeda; color: var(--amber); border-radius: 3px; padding: 0 
   box-shadow: none;
 }
 
+/* ============================================================
+   Day 13：三个视图与视图导航（hash 路由）
+   ⚠️ 这里**故意不给 .view 写 display** ——
+   视图的显隐靠 hidden 属性，一旦给 .view 写了 display，
+   hidden 就会被作者样式盖掉（Day 10 踩过的坑），三个视图会同时露出来。
+   ============================================================ */
+.view-nav {
+  display: flex;
+  /* 左内边距 = 内容左边距(24px) - 链接自己的内边距(16px)，
+     让第一个标签的文字和下面 .app-main 里的内容左边对齐（R4）*/
+  padding: 0 calc(var(--space-6) - var(--space-4));
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.view-link {
+  display: inline-block;
+  padding: var(--space-3) var(--space-4);
+  font-size: 13px;
+  color: var(--text-weak);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+.view-link:hover { color: var(--blue); }
+/* 当前视图：颜色 + 加粗 + 下划线三重变化。不只靠颜色，
+   色觉障碍的用户光看颜色分不出"我在哪一页" */
+.view-link.active {
+  color: var(--blue);
+  font-weight: 600;
+  border-bottom-color: var(--blue);
+}
+.view-link:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+
+.view-title { font-size: 16px; font-weight: 600; margin: 0 0 var(--space-3); }
+.view-title:focus { outline: none; }   /* 切视图时程序把焦点移过来，不必画焦点圈 */
+.view-desc { font-size: 13px; color: var(--text-weak); margin: 0 0 var(--space-4); }
+.view-more { margin: var(--space-3) 0 0; font-size: 13px; }
+.view-more a { color: var(--blue); }
+
+/* 「写笔记」视图里的最近 3 条 */
+.recent { margin-top: var(--space-5); }
+.recent-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-faint);
+  letter-spacing: 1px;
+  margin: 0 0 var(--space-2);
+}
+
+/* 「回顾」视图 */
+.review-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+.review-bar .list-status { margin-bottom: 0; }
+
+/* 禁用态：WCAG 不要求"不可用控件"满足对比度，但必须让人看出它现在点不了 */
+.btn-primary:disabled { background: #b9b6ae; cursor: not-allowed; }
+
 /* ---------- 手机上的粗略适配（不做专门优化，PRD 第 5 节）---------- */
 @media (max-width: 720px) {
   .layout { flex-direction: column; }
   .sidebar { width: 100%; flex: none; }
   .app-main { padding: var(--space-4) 14px 40px; }
+  /* 窄屏内容边距变成 14px，导航跟着缩，保持左边缘对齐（14 - 12 = 2）*/
+  .view-nav { padding: 0 calc(14px - var(--space-3)); }
+  .view-link { padding-left: var(--space-3); padding-right: var(--space-3); }
 }
