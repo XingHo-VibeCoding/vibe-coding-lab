@@ -141,11 +141,22 @@ vibe-coding-lab/
 ├── README.md         Day 7 新建 / 后续多次           本文件（运行说明）
 ├── CANDIDATES.md     Day 8 新建                      下期候选清单（新想法的唯一去处）
 ├── DESIGN_REVIEW.md  Day 9 新建                      设计审查：规则、问题、修复对照
-├── skills/notelab-filter-check/  Day 12 新建 / Day 13 扩充   自检 Skill
-│     ├── SKILL.md        操作手册（什么时候跑、跑什么）
-│     ├── run.js          行为层：DOM 桩 34 项断言
-│     ├── render-check.js Day 13 新增：可见层，真实浏览器渲染 23 项断言
-│     └── RUNLOG.md       自动留痕（不要手改）
+├── TEST_PLAN.md      Day 14 新建                     真人轻量测试清单（照念的开场白 + 6 个任务 + 观察项）
+├── TEST_RECORD.md    Day 14 新建                     测试记录表（被测人填一次，结论进这里）
+├── api-contract.md   Day 15 新建                     接口契约（字段名照抄 mock-data.js，第 3 周接真实接口的依据）
+├── DEPLOY.md         Day 15 新建                     部署指南（注册 / 部署 /api/health / 前端静态托管，控制台点法）
+├── cloudbase-functions/health/  Day 15 新建          云函数源码（index.js + package.json，version 暗号埋在返回值里）
+├── db/               Day 16 新建                     数据模型（MySQL）
+│     ├── README.md      设计说明：两张表存什么、靠哪个字段关联、字段类型为什么这么选
+│     ├── schema.sql     建表语句（幂等，重复执行不报错）
+│     ├── seed.sql       种子数据 6 条笔记 + 6 行标签（幂等：ID 写死 + ON DUPLICATE KEY UPDATE）
+│     └── verify.sql     select 验证语句 + 每句该看到什么
+├── skills/notelab-filter-check/  Day 12 新建 / Day 13-14 扩充   自检 Skill
+│     ├── SKILL.md           操作手册（什么时候跑、跑什么、为什么分三层）
+│     ├── run.js             行为层：DOM 桩 34 项断言
+│     ├── render-check.js    Day 13 新增：可见层，真实浏览器渲染 23 项断言
+│     ├── mobile-probe.html  Day 14 新增：窄屏实测台（iframe 造真实 390px 视口）
+│     └── RUNLOG.md          自动留痕（不要手改）
 └── .gitignore        Day 2                           忽略规则（.env 不上传）
 ```
 
@@ -177,6 +188,12 @@ vibe-coding-lab/
    `node skills/notelab-filter-check/render-check.js`
    行为层（`run.js`）只能证明"代码是对的"，**证明不了"用户看得见"** ——
    Day 13 那个"四种状态没有入口"的问题就是被这一层漏掉、被你人肉发现的
+11. **量窄屏别用浏览器的 `--window-size`**（Day 14 起）：无头浏览器的窗口宽度有
+   约 504px 的下限，传 390 拿到的布局视口其实是 504、截图却按 390 裁 ——
+   看着像"页面溢出、按钮被挤出屏幕"，是**测量工具的假象**。
+   用 `http://localhost:8123/skills/notelab-filter-check/mobile-probe.html` 量
+12. **拿真人当尺子**（Day 14 起）：新功能上线前，`TEST_PLAN.md` 照着找一个人用一遍。
+   测试期间**不许改代码**（中途改了，后面几步测的就不是同一个版本）
 
 > 已知欠账：`app.js` 已经超过约束 5 的 500 行，拆分方案记在 `CANDIDATES.md` 的 C7，本期先不动。
 
