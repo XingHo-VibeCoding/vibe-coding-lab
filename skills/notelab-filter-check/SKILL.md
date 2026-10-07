@@ -1,6 +1,6 @@
 ---
 name: notelab-filter-check
-description: NoteLab 交互与页面状态自检。触发条件：改过 app.js / index.html / styles.css 里与搜索、标签筛选、空状态、视图切换、四种页面状态相关的代码，或提交前的例行回归。跑两层检查——行为层（DOM 桩 34 项）+ 可见层（真实浏览器渲染 23 项），并自动留调用记录。
+description: NoteLab 交互与页面状态自检。触发条件：改过 app.js / index.html / styles.css 里与搜索、标签筛选、空状态、视图切换、四种页面状态、布局宽度相关的代码，或提交前的例行回归。跑三层检查——行为层（DOM 桩 34 项）+ 可见层（真实浏览器渲染 23 项）+ 窄屏实测（真实 390px 视口），并自动留调用记录。
 ---
 
 # Skill：NoteLab 交互与页面状态自检
@@ -18,6 +18,8 @@ description: NoteLab 交互与页面状态自检。触发条件：改过 app.js 
 - 改了 `styles.css` 里 `.empty-state` / `.view` / `.state-panel` / `.demo-entry` 的显隐
   （防止再犯 Day 10 那类"`display` 把 `hidden` 盖掉"的错）
 - **改了四种状态的进入方式**（Day 13 的真实事故：状态本身是好的，但页面上没有入口，用户走不到）
+- **改了布局宽度相关的东西**：`.app-main` 内边距、卡片 `max-width`、按钮文案变长
+  （按钮文案会把卡片撑开 —— Day 14 确认过 360px 下还撑得住，改文案后要重测）
 - 提交前的例行回归
 
 ## 什么时候不用
@@ -53,7 +55,22 @@ node skills/notelab-filter-check/render-check.js
 - 服务已在跑时加 `--no-serve`，不要重复起
 - 没装浏览器会打印 SKIP 并退出 0（不算失败，但等于这一层没被验证，心里要有数）
 
-### 3. 人工确认（改了交互手感时才做）
+### 3. 窄屏实测（手机宽度，约 10 秒）
+
+浏览器打开（服务在跑的前提下）：
+
+```
+http://localhost:8123/skills/notelab-filter-check/mobile-probe.html
+http://localhost:8123/skills/notelab-filter-check/mobile-probe.html?w=360   ← 更窄
+```
+
+- 页面里用 **iframe** 造出两个真实的 390px 视口（`#/write` 和 `#/notes`），
+  右边直接把实测数字打出来：内容宽 / 有没有横向溢出 / 主控件右边缘有没有超界
+- 全绿（✅ 无横向溢出 + ✅ 完整可见）才算过
+
+> ⚠️ **不要**用 `--window-size=390` 去量窄屏 —— 见下面"坑 3"，那个数字是假的。
+
+### 4. 人工确认（改了交互手感时才做）
 
 浏览器打开 `http://localhost:8123/?demo=1&state=success#/notes`，然后：
 
@@ -63,7 +80,7 @@ node skills/notelab-filter-check/render-check.js
 4. 点左侧一个标签 → 只剩该标签的；再点一次 → 取消恢复
 5. 点顶部三个导航 → 地址栏跟着变成 `#/write` `#/notes` `#/review`，浏览器后退键能退回上一个视图
 
-### 4. 留痕
+### 5. 留痕
 
 - `RUNLOG.md` 由两个脚本自动维护，**不要手改**
 - 把结论（PASS/FAIL + 一句话）写进当天的回复或提交说明
@@ -83,7 +100,7 @@ node skills/notelab-filter-check/render-check.js
 
 两层的关系：**第一层快、查逻辑；第二层慢、查"用户能不能看见"。都不能省。**
 
-## 两个反复踩的坑（写在这里，别再踩第三次）
+## 三个反复踩的坑（写在这里，别再踩第四次）
 
 1. **数元素个数一定要先限定范围。**
    `panel.children.length` 会把"正在取数据…"那行提示也算进去；
@@ -92,6 +109,16 @@ node skills/notelab-filter-check/render-check.js
    **元素藏起来了不等于不在 DOM 里。** 数之前先限定到具体容器（`countList()`）。
 2. **"元素存在"不等于"用户看得见"。**
    要断言的是可见性（`hidden` 状态 + 祖先链条），不是元素在不在。
+3. **无头浏览器的窗口宽度有下限（约 504px）。**
+   `--window-size=390,844` 里那个 390 **不是布局视口** —— 实际视口是 504，
+   而截图仍按 390 像素保存 → 右边 114px 被裁掉，
+   **看起来特别像"页面横向溢出、按钮被挤出屏幕"，其实是测量工具的假象。**
+   （Day 14 真实踩过：截图看着保存按钮被切掉一半，差点去修一个不存在的 bug；
+   注入探针量 `documentElement.scrollWidth` 才发现它和 `clientWidth` 完全相等。）
+   **窄屏必须用 `mobile-probe.html` 的 iframe 方式量**，别信 `--window-size`。
+
+> 这三个坑有共同点：**都是"工具给我的结论"和"事实"不一致。**
+> 所以每次"工具说没事"或"工具说坏了"，都值得再拿第二把尺子量一次。
 
 ## 边界（这个 Skill 不检查什么）
 

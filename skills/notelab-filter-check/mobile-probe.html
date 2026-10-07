@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>NoteLab 手机宽度实测台（iframe 当手机屏）</title>
+<style>
+  /* 为什么必须用 iframe 量窄屏：
+     无头浏览器在 Windows 上把**窗口宽度夹到约 504px 最小值** ——
+     传 --window-size=390 得到的布局视口其实是 504，而截图仍按 390 保存，
+     于是右边 114px 被裁掉，看起来特别像"页面横向溢出、按钮被挤出屏幕"。
+     （Day 14 真实踩过：差点去修一个不存在的 bug。）
+
+     iframe 给内部页面一个**真实的 390px 视口**，媒体查询也按 390 生效；
+    同源（都走 localhost）所以能读 iframe 里的真实尺寸做断言。 */
+  body { margin: 0; background: #2b2b2b; display: flex; gap: 18px; padding: 18px;
+         font: 12px/1.6 monospace; color: #eee; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .cap { color: #9fd; }
+  iframe { width: 390px; height: 844px; border: 0; background: #fff; }
+  #probe-out { white-space: pre-wrap; color: #ffd479; max-width: 520px; }
+</style>
+</head>
+<body>
+  <div class="col"><span class="cap">390×844 · #/write</span><iframe id="f1" src="../../index.html#/write"></iframe></div>
+  <div class="col"><span class="cap">390×844 · #/notes</span><iframe id="f2" src="../../index.html#/notes"></iframe></div>
+  <div class="col"><span class="cap">实测（真实 390 视口）</span><div id="probe-out">测量中…</div></div>
+
+<script>
+/* 用 URL 参数可改宽度：?w=360 或 ?w=320（余力加练时试更窄的） */
+var W = new URLSearchParams(location.search).get('w');
+if (W) {
+  document.querySelectorAll('iframe').forEach(function (f) { f.style.width = W + 'px'; });
+}
+
+function measure(id, label) {
+  var f = document.getElementById(id);
+  f.addEventListener('load', function () {
+    setTimeout(function () {
+      var doc = f.contentDocument;
+      var d = doc.documentElement;
+      // 该视图里的主控件：写笔记看保存按钮，全部笔记看搜索框
+      var probeEl = doc.getElementById('save-btn');
+      var elName = '保存按钮';
+      if (!probeEl || !probeEl.offsetParent) { probeEl = doc.getElementById('search-input'); elName = '搜索框'; }
+      var r = probeEl.getBoundingClientRect();
+      var overflow = d.scrollWidth - d.clientWidth;
+      var pushedOut = r.right > d.clientWidth + 1;
+      var line = label + ' 视口=' + d.clientWidth + 'px  内容宽=' + d.scrollWidth + 'px  '
+        + (overflow > 0 ? '❌ 横向溢出 ' + overflow + 'px' : '✅ 无横向溢出')
+        + '\n   ' + elName + '右边缘=' + Math.round(r.right) + '（视口 ' + d.clientWidth + '）'
+        + (pushedOut ? ' ❌ 被挤出屏幕' : ' ✅ 完整可见');
+      var out = document.getElementById('probe-out');
+      out.textContent = (out.textContent === '测量中…' ? '' : out.textContent) + line + '\n';
+    }, 600);
+  });
+}
+measure('f1', '【写笔记】');
+measure('f2', '【全部笔记】');
+</script>
+</body>
+</html>
