@@ -1,0 +1,6 @@
+{
+  "name": "notelab-health",
+  "version": "0.1.0",
+  "description": "NoteLab 健康检查云函数（Day 15：第一个公网接口）",
+  "main": "index.js"
+}
