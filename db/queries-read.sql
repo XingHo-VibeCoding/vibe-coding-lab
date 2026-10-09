@@ -3,10 +3,11 @@
 --
 -- 用法：在 CloudBase 控制台 → 数据库 → MySQL → SQL 编辑器里逐句执行。
 --       这是任务清单"卡住降级"里要求的顺序：**先把 SQL 验对，再排查部署环节**。
---       Day 17 云函数里跑的，就是下面这几句（把示例值换成参数）。
+--       云函数里跑的是等价的两句（见第 ⑥ 段），把示例值换成占位符 ?。
 --
 -- 注意：下面的示例值都是字面量（方便直接粘着跑）；
---       云函数里会换成占位符 ? 并按顺序传参。
+--       ① ～ ③ 里的 GROUP_CONCAT 是**给人在控制台看结果用的**（'#' 拼起来一眼能读懂），
+--       云函数里不这么拼 —— 为什么不这么拼，第 ⑥ 段有完整说明（那是个真踩到的坑）。
 -- ============================================================
 
 
@@ -89,33 +90,47 @@ ORDER BY n.created_at DESC
 LIMIT 2;
 
 
--- ---------- ⑥ 三种筛选组合（云函数实际拼的就是这一句的骨架）----------
--- 传什么算什么：关键词为空则不过滤关键词；标签为空则不过滤标签
--- 云函数里用占位符，形态如下（不要直接跑，先看懂结构）：
+-- ---------- ⑥ 筛选组合 + 标签怎么拼（云函数实际跑的形态）----------
 --
---   SELECT n.id, n.content, n.created_at,
---          GROUP_CONCAT(t.tag ORDER BY t.position SEPARATOR '\u001f') AS tags_joined
---   FROM (
---     SELECT n.id FROM notes AS n
---     WHERE (? IS NULL OR n.content LIKE CONCAT('%', ?, '%')
---            OR EXISTS (SELECT 1 FROM note_tags z
---                       WHERE z.note_id = n.id
---                         AND z.tag COLLATE utf8mb4_unicode_ci LIKE CONCAT('%', ?, '%')))
---       AND (? IS NULL
---            OR (? = '__none__' AND NOT EXISTS (SELECT 1 FROM note_tags x WHERE x.note_id = n.id))
---            OR EXISTS (SELECT 1 FROM note_tags y WHERE y.note_id = n.id AND y.tag = ?))
---     ORDER BY n.created_at DESC
---     LIMIT ?
---   ) AS f
---   JOIN notes AS n ON n.id = f.id
---   LEFT JOIN note_tags AS t ON t.note_id = n.id
---   GROUP BY n.id, n.content, n.created_at
---   ORDER BY n.created_at DESC;
+-- ★ Day 17 写云函数时的修正：本段原先是一句带 GROUP_CONCAT 的 SQL，
+--   用 '\u001f' 当分隔符。那是**错的**，三个原因：
+--   1) MySQL 不认 '\u001f' 这种转义（那是 JS / Python 的写法）。
+--      MySQL 遇到不认识的转义会**丢掉反斜杠** → 它实际是字面量 `u001f`，
+--      拼出来变成 `想法u001f代码`，而且**不报错**。
+--      要改也得写 CHAR(31)，但 GROUP_CONCAT 的 SEPARATOR 后面只收字符串字面量。
+--   2) 标签是用户自己起的名，逗号、竖线、'#' 都可能出现 ——
+--      "挑一个不会出现的分隔符"本质上是赌。
+--   3) 顺带：GROUP_CONCAT 受 group_concat_max_len 限制（默认 1024 字节），
+--      超了**静默截断**，不报错，只是悄悄少标签。
 --
--- 为什么先筛 id 再拼标签：如果直接 JOIN + WHERE，标签会被 WHERE 过滤掉一部分，
--- 拼出来的 tags 就只剩"命中的那个标签"，而不是这条笔记的全部标签。
--- （例：搜「想法」命中 seed_04，它应该显示 `想法 #代码` 两个标签，而不是只有 `想法`）
--- 分隔符用 \u001f（单元分隔符）而不是逗号：标签名里出现逗号时不会串味。
+-- → 云函数里改成**两句**（都在 cloudbase-functions/notes/index.js）：
+--
+-- 第一句：只要"是哪几条"，筛选条件全在这句。
+--   关键词为空则不拼第一个 WHERE 条件；标签为空则不拼第二个；
+--   云函数里用 ? 占位符按需拼，下面把示例值写死方便直接跑。
+SELECT n.id, n.content, n.created_at
+FROM notes AS n
+WHERE (n.content LIKE CONCAT('%', '想法', '%')
+       OR EXISTS (SELECT 1 FROM note_tags AS z
+                  WHERE z.note_id = n.id
+                    AND z.tag COLLATE utf8mb4_unicode_ci LIKE CONCAT('%', '想法', '%')))
+ORDER BY n.created_at DESC
+LIMIT 50;
+
+
+-- 第二句：按上面这批 id，把它们的**全部**标签取回来
+-- （'seed_02','seed_04' 换成第一步实际得到的 id）
+SELECT note_id, tag
+FROM note_tags
+WHERE note_id IN ('seed_02', 'seed_04')
+ORDER BY note_id, position;
+
+
+-- ★ 为什么必须拆两句：如果按老写法 JOIN + WHERE 一起筛，
+--   标签会被 WHERE 一起过滤掉，拼出来的 tags 只剩"命中的那个标签"。
+--   例：搜「想法」命中 seed_04，卡片该显示 `想法 #代码` 两个标签，
+--       而不是只有 `想法`（PRD 要求卡片展示这条笔记的全部标签）。
+--   拆开之后，这条正确性是**结构上**保证的 —— 不依赖分隔符挑得好不好。
 
 
 -- ---------- ⑦ 自检：接口返回的条数对不对 ----------

@@ -1,0 +1,9 @@
+{
+  "name": "notelab-notes",
+  "version": "0.1.0",
+  "description": "NoteLab 读接口 GET /api/notes（Day 17：从库里取真实笔记）",
+  "main": "index.js",
+  "dependencies": {
+    "mysql2": "^3.24.5"
+  }
+}

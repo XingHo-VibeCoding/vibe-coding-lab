@@ -90,7 +90,23 @@ WHERE n.id = 'seed_04';
 | 验证了什么 | 怎么验的 | 结论 |
 |---|---|---|
 | **表关系 / 关联查询 / 幂等模式**的设计 | 本机 SQLite 等价结构跑了一遍（脚本在会话目录，未入库） | **14/14 通过**：LEFT JOIN 不丢无标签笔记、`想法` 正确统计为 2、无悬空关联、`Work`/`work` 能共存、删笔记时标签级联删除 |
-| **MySQL 方言本身** | —— | ⚠️ **未验证**。`DATETIME(3)`、`utf8mb4_bin`、`ON DUPLICATE KEY UPDATE`、`ENGINE=InnoDB` 这些在 SQLite 里是另一套写法，只能在 CloudBase 上真跑才算验过 |
+| **读接口的查询逻辑**（Day 17 新增） | 本机跑 `node skills/notelab-api-check/check.cjs`：A 层直接 require 云函数文件、断言**它自己**的纯函数；B 层把函数**真实生成的 SQL** 机械翻译成 SQLite 方言跑真数据 | **71/71 通过**：全量倒序 / 关键词不区分大小写 / 关键词能命中标签 / 标签精确筛选区分大小写 / 无标签 / limit 边界 / 关键词+标签组合 / 删笔记级联 |
+| **MySQL 方言本身** | —— | ⚠️ **未验证**。`DATETIME(3)`、`utf8mb4_bin`、`ON DUPLICATE KEY UPDATE`、`ENGINE=InnoDB`、`COLLATE utf8mb4_unicode_ci` 这些在 SQLite 里是另一套写法，只能在 CloudBase 上真跑才算验过 |
+
+### 一次被自检拦下来的错误（Day 17，写在这里免得再犯）
+
+`queries-read.sql` 第 ⑥ 段原先用 `GROUP_CONCAT(... SEPARATOR '\u001f')` 拼标签。
+**这是错的**：`\u001f` 是 JS / Python 的转义写法，**MySQL 不认**，
+遇到不认识的转义会丢掉反斜杠 —— 于是分隔符变成字面量 `u001f`，
+拼出来是 `想法u001f代码`，而且**不报任何错**。
+
+顺带两个同源问题：标签是用户自己起的名，逗号 / 竖线 / `#` 都可能出现，
+"挑一个不会出现的分隔符"本质上是赌；而且 `GROUP_CONCAT` 受 `group_concat_max_len`
+限制（默认 1024 字节），超了会**静默截断**。
+
+→ 现在改成**两句 SQL**（先筛笔记 id，再按这批 id 取全部标签）。
+这样"筛标签时标签不会被筛选条件吃掉"这条正确性变成了**结构上**保证的，
+不再依赖分隔符挑得好不好。实现见 `cloudbase-functions/notes/index.js`。
 
 **没验证的两处已知风险**（真跑时优先看这两条）：
 1. `ON DUPLICATE KEY UPDATE ... VALUES(col)` 在 MySQL 8.0.20+ 会报**告警**（不是错误）。

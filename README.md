@@ -143,20 +143,26 @@ vibe-coding-lab/
 ├── DESIGN_REVIEW.md  Day 9 新建                      设计审查：规则、问题、修复对照
 ├── TEST_PLAN.md      Day 14 新建                     真人轻量测试清单（照念的开场白 + 6 个任务 + 观察项）
 ├── TEST_RECORD.md    Day 14 新建                     测试记录表（被测人填一次，结论进这里）
-├── api-contract.md   Day 15 新建                     接口契约（字段名照抄 mock-data.js，第 3 周接真实接口的依据）
-├── DEPLOY.md         Day 15 新建                     部署指南（注册 / 部署 /api/health / 前端静态托管，控制台点法）
-├── cloudbase-functions/health/  Day 15 新建          云函数源码（index.js + package.json，version 暗号埋在返回值里）
+├── api-contract.md   Day 15 新建 / Day 17 补限        接口契约（字段名照抄 mock-data.js，第 3 周接真实接口的依据）
+├── DEPLOY.md         Day 15 新建 / Day 17 续          部署指南（注册 / health / 前端托管 / 附录：建库 + 部署读接口）
+├── cloudbase-functions/
+│     ├── health/     Day 15 新建                      健康检查云函数（version 暗号埋在返回值里）
+│     └── notes/      Day 17 新建                      读接口 GET /api/notes（mysql2 连接池 + 环境变量，含 VPC 与自动暂停说明）
 ├── db/               Day 16 新建                     数据模型（MySQL）
 │     ├── README.md      设计说明：两张表存什么、靠哪个字段关联、字段类型为什么这么选
 │     ├── schema.sql     建表语句（幂等，重复执行不报错）
 │     ├── seed.sql       种子数据 6 条笔记 + 6 行标签（幂等：ID 写死 + ON DUPLICATE KEY UPDATE）
-│     └── verify.sql     select 验证语句 + 每句该看到什么
-├── skills/notelab-filter-check/  Day 12 新建 / Day 13-14 扩充   自检 Skill
+│     ├── verify.sql     select 验证语句 + 每句该看到什么
+│     └── queries-read.sql  Day 17 新建                读接口要用的 SQL（控制台先验数据，再排查部署）
+├── skills/notelab-filter-check/  Day 12 新建 / Day 13-14 扩充   自检 Skill（前端）
 │     ├── SKILL.md           操作手册（什么时候跑、跑什么、为什么分三层）
 │     ├── run.js             行为层：DOM 桩 34 项断言
 │     ├── render-check.js    Day 13 新增：可见层，真实浏览器渲染 23 项断言
 │     ├── mobile-probe.html  Day 14 新增：窄屏实测台（iframe 造真实 390px 视口）
 │     └── RUNLOG.md          自动留痕（不要手改）
+├── skills/notelab-api-check/     Day 17 新建                    自检 Skill（云函数）
+│     ├── SKILL.md           操作手册（分三层的原因、没验到的六条、重复踩过的坑）
+│     └── check.cjs          A 纯函数 / B SQL 语义 / C 入口，71 项断言，零依赖（Node 22+ 内置 sqlite）
 └── .gitignore        Day 2                           忽略规则（.env 不上传）
 ```
 
@@ -164,6 +170,11 @@ vibe-coding-lab/
 
 输入框 → `app.js` 拆标签组装笔记对象 → 存进 localStorage 的唯一位置（`loadNotes()` / `saveNotes()` 两个函数）
 → 打开页面时读回内存 → 渲染成列表 / 搜索 / 随机回顾。**全程不经过任何服务器。**
+
+> Day 17 起服务端那一半已经准备好（`cloudbase-functions/notes/` + `db/`），
+> 但**前端还没切过去** —— 页面仍然只读 localStorage。
+> 切换的前提是先有一个真的 CloudBase 环境（见 `DEPLOY.md`）。
+> 切换时前端只该改取数那一处，因为接口返回的形状就是照着 `mock-data.js` 定的。
 
 ---
 
@@ -194,6 +205,17 @@ vibe-coding-lab/
    用 `http://localhost:8123/skills/notelab-filter-check/mobile-probe.html` 量
 12. **拿真人当尺子**（Day 14 起）：新功能上线前，`TEST_PLAN.md` 照着找一个人用一遍。
    测试期间**不许改代码**（中途改了，后面几步测的就不是同一个版本）
+13. **连库的代码只照文档写，不靠记忆猜**（Day 17 起）：
+   CloudBase 的 MySQL 连接、VPC、环境变量都写在官方文档里，
+   和"一般 Node 项目连 MySQL"的默认做法**不一样**（尤其"必须配 VPC、配了之后不能上公网"
+   这一条）。写之前先把文档读到手；读不到就不写，宁可空着
+14. **占位符个数必须等于参数个数**（Day 17 起）：拼 SQL 时值一律走 `?`。
+   写错的后果是运行时才报数据库的错，报的不是"你少传了一个参数"。
+   改了 `buildWhere()` 之后先跑 `node skills/notelab-api-check/check.cjs`，
+   A 层会把六种参数组合逐个核这条
+15. **一件事只有一个名字**（Day 17 起）：不接受"URL 里叫 none、内部叫 __none__"这种
+   隐式换算 —— 两个函数之间靠看不见的约定耦合，谁忘了换算就**静默筛不到、还不报错**。
+   这是自检脚本 B-11 当天抓出来的，最后把那层换算整个删掉了
 
 > 已知欠账：`app.js` 已经超过约束 5 的 500 行，拆分方案记在 `CANDIDATES.md` 的 C7，本期先不动。
 
