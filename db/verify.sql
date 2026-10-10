@@ -47,3 +47,30 @@ WHERE n.id IS NULL;
 -- ---------- ⑤ 幂等自检：再跑一遍 seed.sql，然后重跑 ①----------
 -- 该看到：数字**完全不变**（还是 6 / 6）。数字变大 = 幂等没做对。
 -- （这一条没有语句，是操作步骤：重跑 db/seed.sql → 重跑上面的 COUNT）
+
+
+-- ---------- ⑥ 幂等键那一列在位（Day 18 新增）----------
+-- 该看到：一行，COLUMN_NAME = client_token、IS_NULLABLE = YES
+SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_TYPE
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notes' AND COLUMN_NAME = 'client_token';
+
+-- 该看到：一行，INDEX_NAME = uk_notes_client_token、NON_UNIQUE = 0（0 就是"唯一"）
+-- 如果 NON_UNIQUE 是 1，说明建成了普通索引 —— 那样重复提交就拦不住了
+SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME
+FROM information_schema.STATISTICS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notes'
+  AND INDEX_NAME = 'uk_notes_client_token';
+
+
+-- ---------- ⑦ 重复提交的证据长什么样（Day 18 截图要用这一句）----------
+-- POST 一条成功之后再跑这句：该看到刚写进去的那一行，client_token 就是你请求里给的那个值
+SELECT id, content, created_at, client_token
+FROM notes
+WHERE client_token IS NOT NULL
+ORDER BY created_at DESC
+LIMIT 5;
+
+-- seed 那 6 行应该都是 NULL（它们不是通过接口写进来的，所以没有幂等键）
+SELECT COUNT(*) AS null_token_rows FROM notes WHERE client_token IS NULL;
+

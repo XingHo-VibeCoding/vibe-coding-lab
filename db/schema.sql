@@ -15,20 +15,43 @@
 -- ---------- 表一：notes（笔记本体）----------
 -- 一条笔记一行，只存"笔记自己"的信息，不存标签
 CREATE TABLE IF NOT EXISTS notes (
-  id         VARCHAR(32)   NOT NULL
-             COMMENT '笔记 ID，形如 n_1727...；沿用前端既有的字符串 ID，不用自增，老数据可直接平移',
-  content    VARCHAR(5000) NOT NULL
-             COMMENT '笔记正文（含 #标签 原文）。5000 与前端 MAX_LENGTH 一致，前端拦不住的后端还要拦',
-  created_at DATETIME(3)   NOT NULL
-             COMMENT '创建时间，毫秒精度，库里一律存 UTC。用 DATETIME 不用 TIMESTAMP：TIMESTAMP 有 2038 年上限，且会随会话时区自动换算',
+  id           VARCHAR(32)   NOT NULL
+               COMMENT '笔记 ID，形如 n_1727...；沿用前端既有的字符串 ID，不用自增，老数据可直接平移',
+  content      VARCHAR(5000) NOT NULL
+               COMMENT '笔记正文（含 #标签 原文）。5000 与前端 MAX_LENGTH 一致，前端拦不住的后端还要拦',
+  created_at   DATETIME(3)   NOT NULL
+               COMMENT '创建时间，毫秒精度，库里一律存 UTC。用 DATETIME 不用 TIMESTAMP：TIMESTAMP 有 2038 年上限，且会随会话时区自动换算',
+  client_token VARCHAR(64)   NULL
+               COMMENT '提交幂等键（Day 18）：同一次提交被重发时，靠这一列的唯一索引把第二遍挡掉。NULL = 不是通过 POST 接口写进来的（比如 seed 数据）',
   PRIMARY KEY (id),
+  UNIQUE KEY uk_notes_client_token (client_token),
   KEY idx_notes_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='笔记：列表按 created_at 倒序显示';
 
+-- ★ 关于 client_token 的两个要点（Day 18）
+--
+-- 1) 为什么是真的唯一索引，而不是"插入前先 SELECT 查一遍"：
+--    先查再插有竞态 —— 两个请求可能同时查到"不存在"，然后双双插入成功。
+--    唯一索引是数据库层面的一次裁决，并发也挡得住。代码里因此**没有**那句预查，
+--    直接 INSERT，捕到 ER_DUP_ENTRY(1062) 就回 409。
+--
+-- 2) 为什么允许 NULL：MySQL 的唯一索引**不约束 NULL**，所以可以有任意多行 NULL。
+--    这一点正好用得上 —— seed 数据、以及将来别的方式写进来的行都可以不带 token，
+--    而它们彼此不会互相冲突。如果这一列设成 NOT NULL 就没这个余地了。
+--
 -- 注意 content 用的是表默认排序规则 utf8mb4_unicode_ci（大小写不敏感），
 -- 这是**故意的**：PRD 验收 3.1 要求搜索"不区分大小写"，
 -- 这样 `WHERE content LIKE '%flomo%'` 能匹配到 Flomo。
+
+-- ⚠️ 如果你的 notes 表是 Day 16 那一版建的（还没有 client_token 这一列），
+--    执行下面这句补上。MySQL **不支持** `ADD COLUMN IF NOT EXISTS`，
+--    所以重复执行会报 "Duplicate column name" —— 那不是错误，是它告诉你已经有了。
+--
+-- ALTER TABLE notes
+--   ADD COLUMN client_token VARCHAR(64) NULL
+--     COMMENT '提交幂等键（Day 18）：同一次提交被重发时靠唯一索引挡掉第二遍',
+--   ADD UNIQUE KEY uk_notes_client_token (client_token);
 
 
 -- ---------- 表二：note_tags（标签关联）----------

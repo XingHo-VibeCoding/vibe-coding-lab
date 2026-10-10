@@ -143,11 +143,16 @@ vibe-coding-lab/
 ├── DESIGN_REVIEW.md  Day 9 新建                      设计审查：规则、问题、修复对照
 ├── TEST_PLAN.md      Day 14 新建                     真人轻量测试清单（照念的开场白 + 6 个任务 + 观察项）
 ├── TEST_RECORD.md    Day 14 新建                     测试记录表（被测人填一次，结论进这里）
-├── api-contract.md   Day 15 新建 / Day 17 补限        接口契约（字段名照抄 mock-data.js，第 3 周接真实接口的依据）
-├── DEPLOY.md         Day 15 新建 / Day 17 续          部署指南（注册 / health / 前端托管 / 附录：建库 + 部署读接口）
+├── api-contract.md   Day 15 新建 / Day 17-18 续       接口契约（字段名照抄 mock-data.js；Day 17 补 limit，Day 18 补 POST 与 409）
+├── DEPLOY.md         Day 15 新建 / Day 17-18 续       部署指南（注册 / health / 前端托管 / 附录：建库 + 部署读接口 + 写接口）
 ├── cloudbase-functions/
 │     ├── health/     Day 15 新建                      健康检查云函数（version 暗号埋在返回值里）
-│     └── notes/      Day 17 新建                      读接口 GET /api/notes（mysql2 连接池 + 环境变量，含 VPC 与自动暂停说明）
+│     └── notes/      Day 17 新建 / Day 18 拆 5 文件     读写接口（同一函数同时吃 GET 和 POST /api/notes）
+│           ├── index.js   入口与路由（OPTIONS 先行、校验在前、连库在后）
+│           ├── http.js    Day 18 新建                响应形状的唯一出处（ok / fail / preflight + CORS 头）
+│           ├── db.js      Day 18 新建                连接池（懒加载 mysql2）+ UTC 时间互转
+│           ├── read.js    Day 18 新建                GET：解析参数 + 拼查询（从原 index.js 拆出）
+│           └── write.js   Day 18 新建                POST：校验 + 事务写入 + clientToken 去重（重复→409）
 ├── db/               Day 16 新建                     数据模型（MySQL）
 │     ├── README.md      设计说明：两张表存什么、靠哪个字段关联、字段类型为什么这么选
 │     ├── schema.sql     建表语句（幂等，重复执行不报错）
@@ -160,9 +165,9 @@ vibe-coding-lab/
 │     ├── render-check.js    Day 13 新增：可见层，真实浏览器渲染 23 项断言
 │     ├── mobile-probe.html  Day 14 新增：窄屏实测台（iframe 造真实 390px 视口）
 │     └── RUNLOG.md          自动留痕（不要手改）
-├── skills/notelab-api-check/     Day 17 新建                    自检 Skill（云函数）
-│     ├── SKILL.md           操作手册（分三层的原因、没验到的六条、重复踩过的坑）
-│     └── check.cjs          A 纯函数 / B SQL 语义 / C 入口，71 项断言，零依赖（Node 22+ 内置 sqlite）
+├── skills/notelab-api-check/     Day 17 新建 / Day 18 扩到 5 层  自检 Skill（云函数）
+│     ├── SKILL.md           操作手册（分层的原因、没验到的条目、重复踩过的坑）
+│     └── check.cjs          Day 18 起 A 纯函数 / B SQL 语义 / C 入口分支 / D 写入校验 / E 真跑写入，149 项断言，零依赖（Node 22+ 内置 sqlite）
 └── .gitignore        Day 2                           忽略规则（.env 不上传）
 ```
 
@@ -172,6 +177,8 @@ vibe-coding-lab/
 → 打开页面时读回内存 → 渲染成列表 / 搜索 / 随机回顾。**全程不经过任何服务器。**
 
 > Day 17 起服务端那一半已经准备好（`cloudbase-functions/notes/` + `db/`），
+> Day 18 又把**写接口**（POST）补上 —— 读和写现在是**同一个云函数**，因为你一个路径
+> `/api/notes` 只能绑一个函数，GET 和 POST 只能住在一起。
 > 但**前端还没切过去** —— 页面仍然只读 localStorage。
 > 切换的前提是先有一个真的 CloudBase 环境（见 `DEPLOY.md`）。
 > 切换时前端只该改取数那一处，因为接口返回的形状就是照着 `mock-data.js` 定的。
@@ -216,8 +223,18 @@ vibe-coding-lab/
 15. **一件事只有一个名字**（Day 17 起）：不接受"URL 里叫 none、内部叫 __none__"这种
    隐式换算 —— 两个函数之间靠看不见的约定耦合，谁忘了换算就**静默筛不到、还不报错**。
    这是自检脚本 B-11 当天抓出来的，最后把那层换算整个删掉了
+16. **先校验、再连库**（Day 18 起）：`POST` 里"字段不合法"这类判断必须排在
+   **申请数据库连接之前**。两个好处：① 坏请求根本不占连接、不吵数据库；
+   ② 这些分支能在**没有数据库的本机**被测到（C/D 两层就是这么来的）。
+   自检里专门有一条守卫 `validation precedes connection`，防止以后被人把顺序调换
+17. **防重复提交靠唯一索引兜底，不许"先查再插"**（Day 18 起）：
+   「查一下有没有 → 没有就插」中间有时间差，两次请求同时进来会**双双通过检查**、
+   插出两行。正确做法是给 `notes.client_token` 建 `UNIQUE` 索引，
+   插的时候撞键（`ER_DUP_ENTRY` / 1062）→ 回 `409`。
+   拦住重复的**不是那段 if**，是数据库那条约束。详见 `db/README.md` 第二、三节
 
-> 已知欠账：`app.js` 已经超过约束 5 的 500 行，拆分方案记在 `CANDIDATES.md` 的 C7，本期先不动。
+> 已知欠账：`app.js`（707 行）和云函数自检 `check.cjs`（811 行）都超过了约束 5 的 500 行。
+> 拆分方案记在 `CANDIDATES.md` 的 C7 / C8，本期先不动（拆分是重构，不和新功能混在一天）。
 
 ---
 

@@ -1,4 +1,4 @@
-# DEPLOY.md｜部署指南（Day 15 立，Day 17 续）
+# DEPLOY.md｜部署指南（Day 15 立，Day 17 续，Day 18 补写接口）
 
 > 注册那一步（课程附录 M）只能你自己做：要登录腾讯账号、手机验证。
 > 装好后剩下的每一步，这份文件给出控制台点法。**控制台界面和我描述的对不上时，
@@ -13,7 +13,7 @@
 | ① | 注册并开通 CloudBase 环境 | 10–15 分钟 | 帮不了（要你本人账号） |
 | ② | 部署 `/api/health` 云函数 | 5 分钟 | 代码我已写好，在 `cloudbase-functions/health/` |
 | ③ | 部署前端 mock 版页面（静态托管） | 5 分钟 | 文件就是现有那 4 个，原样上传 |
-| ④ | 建库建表 + 部署 `/api/notes` 读接口 | 20 分钟 | 代码和 SQL 都已写好并在本机验过，见文末附录 |
+| ④ | 建库建表 + 部署 `/api/notes`（读 + 写同一函数） | 20 分钟 | 代码和 SQL 都已写好并在本机验过，见文末附录 |
 
 ① 不做，②③④ 全都做不了（没有环境就没有地方部署）。**所以第 ① 步是唯一的硬阻塞。**
 
@@ -240,4 +240,124 @@ npm install
 
 拿到之后我就把环境 ID 填进 `api-contract.md` 的 Base URL，
 然后把前端的取数口从 localStorage 切到这个接口上，提交推送收尾。
+
+---
+
+## 附录：Day 18 续——写接口 `POST /api/notes`（防重复提交）
+
+### 一句话：读和写是**同一个云函数**
+
+HTTP 访问服务里**一个路径只能绑一个函数**，所以 `/api/notes` 上的 GET 和 POST
+只能住在同一个 `notes` 函数里。Day 18 把原来的 `index.js` 拆成了 5 个文件
+（`index.js` 路由 + `http.js` / `db.js` / `read.js` / `write.js`），
+**函数名、路径、环境变量、VPC 配置全都不用改** —— 重新上传一次代码就行。
+
+> 拆文件是因为约束 5「单文件超 500 行就拆」。现在每个文件都在 200 行以内。
+
+### 这一步要防的是什么（今天要掌握的那件事）
+
+**防的是同一次提交被发了两次**。最典型的场景：网卡了一下，用户以为没保存成功，
+又点了一次「保存」。前端保证不了"绝不发第二次"，所以必须服务端兜底。
+
+防法：前端每次提交生成一个随机串 `clientToken`，库里给这一列建了 `UNIQUE` 索引，
+插入时撞键就回 `409`。**拦住重复的是数据库那条唯一约束，不是代码里的一段判断**
+（"先查再插"有竞态，两个请求会双双通过检查）。设计细节见 `db/README.md` 第二节。
+
+### 1. 更新数据库（老表要补一列）
+
+已经跑过 Day 17 建表的话，`notes` 表还**缺 `client_token` 这一列**，补一下：
+
+```sql
+-- db/schema.sql 里已有；老表执行这两句即可
+ALTER TABLE notes ADD COLUMN client_token VARCHAR(64) NULL;
+CREATE UNIQUE INDEX uk_notes_client_token ON notes (client_token);
+```
+
+> MySQL 没有 `ADD COLUMN IF NOT EXISTS`，重复执行会报"列已存在" —— 报错就是已经加过了，忽略即可。
+> 全新环境直接跑 `db/schema.sql` 一次到位。
+> 跑完用 `db/verify.sql` 的 ⑥ 核一下：列在不在、唯一索引在不在。
+
+### 2. 重新上传云函数代码
+
+「云函数」→ `notes` →「函数代码」→ 文件夹上传 →
+选 `C:\D\Projects\vibe-coding-lab\cloudbase-functions\notes` 整个文件夹
+（**5 个 `.js` + `package.json` + `node_modules`** 一起）。
+
+> 依赖没变（还是只有 `mysql2`），本地不用重跑 `npm install`。
+
+### 3. ★ 写一次 + 读回，再故意重复一次
+
+**第 1 步：正常写一条**（把 `clientToken` 换成任意 8～64 位的随机串）：
+
+```bash
+curl -X POST "https://<环境ID>.service.tcloudbase.com/api/notes" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Day 18 第一条真实写入 #部署","tags":["部署"],"clientToken":"tok-day18-demo-0001"}'
+```
+
+**该看到**（形状与 `api-contract.md` 第 4 节一致）：
+
+```json
+{"ok":true,"note":{"id":"n_...","content":"Day 18 第一条真实写入 #部署","tags":["部署"],"createdAt":"2026-10-10T...Z"}}
+```
+
+**第 2 步：把上面那条命令原样再跑一次**（`clientToken` 一个字都不改）：
+
+**该看到** —— 同样的 token 被拦下：
+
+```json
+{"ok":false,"message":"这一条刚刚已经提交过了（重复提交已拦下）。如果是想要的新笔记，改一个字再提交。"}
+```
+
+> 这就是"重复提交被拒"的现场。注意它是 **`409`**，不是 `400` ——
+> `400` 是"你发的请求本身有毛病"，`409` 是"请求没毛病、但和已有数据撞了"。
+
+**第 3 步：读回，确认只多了一行**：
+
+```bash
+curl "https://<环境ID>.service.tcloudbase.com/api/notes?limit=1"
+```
+
+`note.content` 该是你刚写的那句；再去数据库里核：
+
+```sql
+SELECT id, content, client_token, created_at FROM notes ORDER BY created_at DESC LIMIT 3;
+```
+
+**该看到**：最新的那一行 `content` 是刚写的、`client_token` 是 `tok-day18-demo-0001`，
+并且**只有一行**是它 —— 第 2 步那次重复**没有**在库里留下第二行。
+
+### 4. 顺手核一下"缺字段也会被拒"（中文提示）
+
+```bash
+curl -X POST "https://<环境ID>.service.tcloudbase.com/api/notes" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"","clientToken":"tok-day18-demo-0002"}'
+```
+
+**该看到**：`{"ok":false,"message":"正文不能为空。"}` —— 提示语是**中文**，
+且这次请求**根本没碰数据库**（校验在连库之前，见 README 约束 16）。
+
+### 5. 今天要发的截图（两张）
+
+| 截图 | 画面里要有 |
+|---|---|
+| **① POST 成功返回** | 第 3 步里那条 `curl` 的返回（返回 JSON 的 `{ok:true, note:{…}}` 形状要看得清）；最好连第 2 步"重复被拒"的返回也一起截进去 |
+| **② 数据库新增的那一行** | 在控制台 SQL 编辑器里跑第 3 步那句 `SELECT`，把结果表格截下来 —— **能看清 `content` 和 `client_token`，且确认只有一行** |
+
+### 6. 报错去哪找
+
+「云函数」→ `notes` →「日志」。写成功时日志里有一条
+`[notelab/notes] 写入成功 { id, clientToken, tags, ms }`；
+拦下重复时有一条 `[notelab/notes] 拦下一次重复提交 { id, clientToken, tags }`。
+（这是任务清单"余力加练"要求的服务端日志 —— 以后排查"到底写没写进去"就看这两行。）
+
+> 连接失败 / 超时这类，先回看 Day 17 附录的第 3 步（VPC）和第 4 步（环境变量）——
+> 那两步没做对，读写都连不上。
+
+### 这一步做完，发给我
+
+1. 两张截图（POST 返回 + 数据库那一行）
+2. 第 2 步"重复被拒"的返回
+3. 日志里有报错的话，截那几行
 

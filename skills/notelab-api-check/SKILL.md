@@ -1,11 +1,12 @@
-# notelab-api-check｜云函数自检（Day 17 建立）
+# notelab-api-check｜云函数自检（Day 17 建立 / Day 18 扩到 5 层）
 
 ## 什么时候跑
 
 改了这些东西之后**必须先跑一次再提交**：
 
-- `cloudbase-functions/notes/index.js`（尤其 `parseParams` / `buildWhere` / `toIsoUtc`）
-- `db/schema.sql` 里 `notes` / `note_tags` 的列
+- `cloudbase-functions/notes/` 下任何一个文件（`index.js` 路由 / `read.js` 读 / `write.js` 写 /
+  `http.js` 响应形状 / `db.js` 时间与连接）
+- `db/schema.sql` 里 `notes` / `note_tags` 的列（D/E 层的断言照着列写死）
 - `db/seed.sql`（B 层的断言是照着这 6 条 seed 写死的）
 
 ```bash
@@ -16,11 +17,11 @@ node skills/notelab-api-check/check.cjs
 不需要 mysql2，也不需要数据库 —— 这一点是故意的：
 本机没有 CloudBase 环境，能验的部分要在没环境的时候也能验。
 
-记录本次结果：全绿（71/71）再提交；有失败项时脚本会以退出码 1 结束。
+记录本次结果：全绿（Day 18 起 **149/149**）再提交；有失败项时脚本会以退出码 1 结束。
 
 ---
 
-## 为什么分三层
+## 为什么分层（Day 17 三层 → Day 18 五层）
 
 前端的 `notelab-filter-check` 之所以分行为层 + 可见层，是因为
 **桩测试能证明"代码是对的"，证明不了"用户看得见"**（Day 13 栽过一次）。
@@ -30,14 +31,21 @@ node skills/notelab-api-check/check.cjs
 |---|---|---|
 | **A 层** | 直接 require 云函数文件，断言它**自己的**纯函数 | 跑的是真代码，不是另抄一份。另抄一份的问题是"仿制品全绿、真代码有 bug" |
 | **B 层** | 把函数**真实生成的 SQL** 机械翻译成 SQLite 方言，跑真数据 | SQL 的语义只能拿真数据验；但本机没有 MySQL |
-| **C 层** | 调 `main()` 本身，只测"碰数据库之前"就返回的几支（405 / 400） | 写错了不会报错，只会变成"接口返回成功但什么都没做" |
+| **C 层** | 调 `main()` 本身，只测"碰数据库之前"就返回的几支（OPTIONS / 405 / 400） | 写错了不会报错，只会变成"接口返回成功但什么都没做" |
+| **D 层**（Day 18） | 把 16 条"该拒的输入"逐个喂给 `parseBody` / `validateNote` | 只测"不合法"这一侧。**每条都要断言提示语是中文** —— 这是任务清单的硬要求 |
+| **E 层**（Day 18） | 用 SQLite 桩**真跑一遍 `insertNote()`**：正常写、重复 token、回滚、读回 | 前三层都验不到"事务到底提交没提交"。只有真跑一次，才敢说"库里确实多了一行、重复那次确实没多" |
 
 **A 层里最值钱的一条**：SQL 里的 `?` 个数必须等于参数个数。
 写错的后果是运行时才报数据库的错，报的不是"你少传了一个参数" ——
-所以它必须在本地被拦死，六个组合逐个核。
+所以它必须在本地被拦死，多个组合逐个核。
 
-**C 层里最值钱的一条**：`main({httpMethod:'POST'})` 必须回 405。
-否则一个 POST 会落到 GET 分支，返回一份**看起来成功、其实什么都没写**的数据。
+**C 层里最值钱的一条**：`main({httpMethod:'POST'})` 必须**不再**回 405
+（Day 17 它回 405，Day 18 它得回 400 —— 因为 POST 已经实现了，只是空 body 不合法）。
+这条同时守住"方法集合"和"校验在连库之前"两件事。
+
+**E 层里最值钱的一条**：同一个 `clientToken` 写两次 → 第二次 `409`，
+**且断言库里仍然只有一行**。这条是今天要掌握的那件事的直接证据：
+"你防了哪种重复提交" —— 防的是同 token 重复发；"怎么测的" —— 就在这一层。
 
 ---
 
@@ -48,12 +56,21 @@ node skills/notelab-api-check/check.cjs
 Day 14 无头浏览器窗口宽度 504 的下限），所以**验证的边界要写在输出里**：
 
 1. MySQL 的 `COLLATE utf8mb4_unicode_ci` 对非 ASCII 的大小写折叠
-2. mysql2 的 `query()` 对 `IN (?)` 的数组展开
-3. `DATETIME(3)` 经 mysql2 `dateStrings` 回传的真实格式
-4. HTTP 访问服务下 `event.queryStringParameters` 是否真的有值
-5. 配了 VPC 之后函数能否真的连上库
+   （B 层的 `LIKE` 只对 ASCII 不区分大小写，中文没有大小写，验不出差异）
+2. mysql2 的 `query()` 对 `IN (?)` / `VALUES ?` 的真实数组展开
+   （E 层的替身自己实现了这个展开，所以它验不了 mysql2 自己做得对不对）
+3. `DATETIME(3)` 经 mysql2 `dateStrings` 回传的真实格式（本机无 MySQL）
+4. HTTP 访问服务下 `event.queryStringParameters` / `event.body` 是否真的按文档给值
+5. 配了 VPC 之后函数能否真的连上库（要有环境才能试）
 6. 网关吃不吃 `{statusCode, headers, body}` 这种结构化返回
-   → 第 6 条有明确的部署后核对步骤，见 `DEPLOY.md` 文末附录第 6 步第 3 条
+   （不吃就得改 `http.js` 的 `toResponse`，改一处、两个接口一起生效）
+7. 真 MySQL 上唯一键冲突到底报成什么（替身按 `ER_DUP_ENTRY` / `1062` 翻译，
+   若 MySQL 给的是别的 code，`isDuplicateToken()` 就认不出来 → 会变成 `500` 而不是 `409`）
+8. 真 MySQL 上事务回滚的行为（InnoDB 与 SQLite 的实现不同）
+9. 真 MySQL 上唯一索引对 `NULL` 的放行（理论上允许任意多 `NULL`）
+10. OPTIONS 预检能不能穿过 CloudBase 的 HTTP 网关到达函数
+
+> 第 4～10 条靠部署后的核对步骤验，见 `DEPLOY.md` 文末 **Day 18 附录**第 3～4 步。
 
 ---
 
@@ -69,3 +86,11 @@ Day 14 无头浏览器窗口宽度 504 的下限），所以**验证的边界要
    那才是最坏的情况（脚本假绿）。当天改的 `TAG_NONE_SENTINEL` 就是活例子。
 3. **SQLite 外键默认是关的**（Day 16 就栽过）：任何用 `ON DELETE CASCADE` 的断言，
    前面必须 `PRAGMA foreign_keys = ON`，否则删除不级联、断言报一个看不懂的错。
+4. **替身验不了真身，别让它假装验过**（Day 18）：E 层要跑 `insertNote()`，就得有个"数据库替身"。
+   这个替身自己实现了两件 mysql2 / MySQL 才有的事 —— `VALUES ?` 的数组展开、
+   把 SQLite 的唯一键错误**翻译**成 `ER_DUP_ENTRY` / `1062`。
+   这两处正是"替身与真身的差"，所以它们**必须**出现在上面的未验证清单里（第 2、7 条）。
+   教训：桩测试越像真的，越要写清"它在哪一步是假的"。
+5. **顺序也要有断言守着**（Day 18）："先校验、再连库"是个**看不见的**约束 ——
+   把校验挪到拿连接之后，代码一样跑、测试一样绿，但 400 分支会开始依赖 mysql2 才能测。
+   C-07 那条断言就是专门守这个顺序的：改错了它会红。
