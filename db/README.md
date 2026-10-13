@@ -126,6 +126,7 @@ WHERE n.id = 'seed_04';
 | **表关系 / 关联查询 / 幂等模式**的设计 | 本机 SQLite 等价结构跑了一遍（脚本在会话目录，未入库） | **14/14 通过**：LEFT JOIN 不丢无标签笔记、`想法` 正确统计为 2、无悬空关联、`Work`/`work` 能共存、删笔记时标签级联删除 |
 | **读接口的查询逻辑**（Day 17 新增 / Day 18 扩层） | 本机跑 `node skills/notelab-api-check/check.cjs`：A 层直接 require 云函数文件、断言**它自己**的纯函数；B 层把函数**真实生成的 SQL** 机械翻译成 SQLite 方言跑真数据 | **71/71 通过**：全量倒序 / 关键词不区分大小写 / 关键词能命中标签 / 标签精确筛选区分大小写 / 无标签 / limit 边界 / 关键词+标签组合 / 删笔记级联 |
 | **写接口的校验与防重复**（Day 18 新增） | 同一个脚本扩到 5 层：D 层把 16 条"该拒的输入"逐个喂给 `validateNote`；E 层用 SQLite 桩**真跑一遍 `insertNote`**（含事务提交、重复 token 撞唯一键、回滚） | **149/149 通过**，其中 E 层验到：第一次写→成功且库里多一行、同一个 `clientToken` 再写→`409` 且**库里没有多出第二行**、标签行与笔记同一事务（失败时一起回滚干净） |
+| **分层没被拆回去**（Day 19 新增） | 自检 **F 层**直接读源码断言：`conn.query` / 事务调用 / SQL 关键字只出现在 `repository.js`；并反查"仓库里确实有 SQL"，防止前几条变成空转 | **163/163 通过**（全套）。F 层还做过一次**注入测试**：故意在 `read.js` 里塞一句 `conn.query("SELECT 1")`，F-04 / F-07 立刻变红（161/163），删掉后恢复全绿 —— 证明这条守卫不是恒真的 |
 | **MySQL 方言本身** | —— | ⚠️ **未验证**。`DATETIME(3)`、`utf8mb4_bin`、`ON DUPLICATE KEY UPDATE`、`ENGINE=InnoDB`、`COLLATE utf8mb4_unicode_ci` 这些在 SQLite 里是另一套写法，只能在 CloudBase 上真跑才算验过 |
 | **真实 MySQL 的重复键错误码** | —— | ⚠️ **未验证**。自检里那个"撞唯一键"的错是 SQLite 桩**模拟**出来的（脚本把它翻译成 `ER_DUP_ENTRY` / `1062`）。真 MySQL 报的是不是这两个值，要真跑一次才知道 —— 所以 `isDuplicateToken()` 里**同时**判 `code` 和 `errno`，两边命中一个就算 |
 
@@ -142,7 +143,8 @@ WHERE n.id = 'seed_04';
 
 → 现在改成**两句 SQL**（先筛笔记 id，再按这批 id 取全部标签）。
 这样"筛标签时标签不会被筛选条件吃掉"这条正确性变成了**结构上**保证的，
-不再依赖分隔符挑得好不好。实现见 `cloudbase-functions/notes/index.js`。
+不再依赖分隔符挑得好不好。实现见 `cloudbase-functions/notes/repository.js`
+（Day 19 起，全部 SQL 都收在这个数据访问层里；Day 19 之前它在 `index.js` / `read.js` 里）。
 
 **没验证的两处已知风险**（真跑时优先看这两条）：
 1. `ON DUPLICATE KEY UPDATE ... VALUES(col)` 在 MySQL 8.0.20+ 会报**告警**（不是错误）。

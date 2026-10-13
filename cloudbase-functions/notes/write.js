@@ -3,29 +3,40 @@
    ============================================================
    契约见 api-contract.md 第四节。
 
-   ★ 今天（Day 18）真正要掌握的那一件事：**防"同一次提交被发了两遍"**。
+   ★ Day 19 起本文件**不再有任何 SQL**：写数据库的活全交给了 repository.js。
+     这里只做三件事：
+       ① parseBody / validateNote —— 来料检查（纯函数，不碰数据库）
+       ② newId / isDuplicateToken —— 两个小判断
+       ③ insertNote —— 决定"什么时候写、失败了算什么错"，然后调用仓库
+
+   ★ Day 18 那件事（**防"同一次提交被发了两遍"**）还在，只是执行方式换了：
      点了两次提交按钮、或者网络超时后前端自动重试，都不该在库里留下两条一样的笔记。
 
-   做法是幂等键 `clientToken` + 数据库唯一索引：
-     - 前端每次"打开写笔记页"生成一个 token，**重试时复用同一个**
-     - 服务端把 token 连同笔记一起写进 notes.client_token（有 UNIQUE）
-     - 同一个 token 第二次插入会被数据库拒绝 → 回 409
+     做法是幂等键 `clientToken` + 数据库唯一索引（唯一索引在 db/schema.sql）：
+       - 前端每次"打开写笔记页"生成一个 token，**重试时复用同一个**
+       - 服务端把 token 连同笔记一起写进 notes.client_token（有 UNIQUE）
+       - 同一个 token 第二次插入会被数据库拒绝 → 本文件把它翻成 409
 
-   ★ 为什么**不**写成"插入前先 SELECT 查一遍 token 在不在"：
-     那样有竞态 —— 两个请求可能同时查到"不存在"，然后双双插进去。
-     唯一索引是数据库层面的一次裁决，并发也挡得住。
-     所以下面的代码里**故意没有那句预查**，这是设计，不是漏写。
+     ★ 为什么**不**写成"插入前先 SELECT 查一遍 token 在不在"：
+       那样有竞态 —— 两个请求可能同时查到"不存在"，然后双双插进去。
+       唯一索引是数据库层面的一次裁决，并发也挡得住。
+       所以下面的代码里**故意没有那句预查**，这是设计，不是漏写。
 
-   ⚠️ 这个防法的边界（别把话说满）：
-     它防不了"前端每次都生成新 token"。复用 token 是前端的责任。
-     它也**不**试图判断"内容是不是重复"—— 两分钟后写一条一模一样的笔记是合法的，
-     用"内容 + 时间窗"去猜会把正常操作误判成重复，而误判比漏判更难解释。
+     ★ 为什么"撞了唯一键"这个判断留在本文件、不放进仓库：
+       数据库只知道"有个唯一键冲突了"，它不知道那意味着"用户在重复提交"。
+       把 1062 翻译成"重复提交、回 409、提示改一个字"是业务判断。
+       仓库层只管把原样错误抛上来（见 repository.js 的说明）。
+
+     ⚠️ 这个防法的边界（别把话说满）：
+       它防不了"前端每次都生成新 token"。复用 token 是前端的责任。
+       它也**不**试图判断"内容是不是重复"—— 两分钟后写一条一模一样的笔记是合法的，
+       用"内容 + 时间窗"去猜会把正常操作误判成重复，而误判比漏判更难解释。
    ============================================================ */
 
 const crypto = require('node:crypto');
 
 const { ok, fail } = require('./http');
-const { toDbDateTime } = require('./db');
+const repo = require('./repository');
 
 // ---------- 与前端对齐的上限（改这里要一起改 app.js 的 MAX_LENGTH / MAX_TAGS）----------
 const MAX_LENGTH = 5000;
@@ -111,7 +122,7 @@ function validateNote(body) {
     return { error: 'content 最多 ' + MAX_LENGTH + ' 字，当前 ' + content.length + ' 字' };
   }
 
-  // ---------- clientToken（必填，今天新增）----------
+  // ---------- clientToken（必填，Day 18 新增）----------
   if (b.clientToken === undefined || b.clientToken === null) {
     return { error: '缺少 clientToken（同一次提交重试时要复用它，用它拦重复提交）' };
   }
@@ -181,11 +192,15 @@ function isDuplicateToken(error) {
 
 
 /* ------------------------------------------------------------
-   写入：笔记和标签必须一起成功、一起失败
+   写入：本层只负责"组装一条笔记 → 交给仓库 → 翻译结果"
    ------------------------------------------------------------
-   用事务的原因：两步写的是两张表。如果笔记插进去了、标签插失败了，
-   库里就留下一条"标签丢了"的笔记 —— 而且没有任何报错提示过这件事。
-   宁可整条回滚，让用户重试。
+   ★ 事务已经挪到 repository.insertNoteWithTags 里（"哪两句必须同生共死"
+     是由表结构定的，属于数据访问层的事）。
+     本层拿到的结果是两种：成功，或者一个从仓库抛上来的原样错误 ——
+     它再把"唯一键冲突"翻译成 409。
+
+   ★ 日志（Day 18 余力加练）留在这里，不留进仓库：
+     仓库只懂"数据"，不懂"这是哪个接口在处理、花了多久、该不该记"。
    ------------------------------------------------------------ */
 async function insertNote(conn, value) {
   const { content, clientToken, tags } = value;
@@ -193,29 +208,15 @@ async function insertNote(conn, value) {
 
   // 同一个时刻，两种写法：库里要 'YYYY-MM-DD HH:mm:ss.SSS'，返回给前端要 ISO。
   // 一次算出来，避免出现"返回的时间和存进去的时间差一点"。
+  // （转成库里的格式是仓库的事，它拿到 ISO 自己转 —— 见 repository.js）
   const iso = new Date().toISOString();
   const id = newId();
 
-  await conn.beginTransaction();
   try {
-    await conn.query(
-      `INSERT INTO notes (id, content, created_at, client_token)
-       VALUES (?, ?, ?, ?)`,
-      [id, content, toDbDateTime(iso), clientToken]
-    );
-
-    if (tags.length > 0) {
-      // 一条标签一行，position 从 0 开始 —— 这个顺序就是前端的标签顺序
-      const rows = tags.map((tag, position) => [id, tag, position]);
-      await conn.query(`INSERT INTO note_tags (note_id, tag, position) VALUES ?`, [rows]);
-    }
-
-    await conn.commit();
+    await repo.insertNoteWithTags(conn, { id, content, createdAt: iso, clientToken, tags });
   } catch (error) {
-    await conn.rollback();
-
     if (isDuplicateToken(error)) {
-      // 走到这里说明"这个 token 已经写过了" —— 这就是今天的核心保护生效了。
+      // 走到这里说明"这个 token 已经写过了" —— 这就是核心保护生效了。
       // 注意：截住它靠的是唯一索引，不是预查（见文件头的说明）。
       // 理论上 id 主键撞车也会报 1062，概率约 40 亿分之一，不值得为它单独加分支，
       // 但写在注释里，免得以后看到这行以为不可能。
@@ -230,8 +231,8 @@ async function insertNote(conn, value) {
     throw error;   // 交给 index.js 统一回 500，并记真实错误
   }
 
-  // ---------- 余力加练：服务端日志 ----------
-  // 记 into 日志的东西要能回答"这条写进来了没有、花了多久"。
+  // ---------- 服务端日志 ----------
+  // 记进日志的东西要能回答"这条写进来了没有、花了多久"。
   // ★ 故意**不记 content**：笔记正文是用户自己的内容，
   //   日志的可见范围比数据库宽，没必要把用户写的东西搬进去。
   //   要排查内容相关的问题，用返回的 id 去库里查。

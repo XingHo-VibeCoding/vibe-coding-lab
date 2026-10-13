@@ -147,12 +147,13 @@ vibe-coding-lab/
 ├── DEPLOY.md         Day 15 新建 / Day 17-18 续       部署指南（注册 / health / 前端托管 / 附录：建库 + 部署读接口 + 写接口）
 ├── cloudbase-functions/
 │     ├── health/     Day 15 新建                      健康检查云函数（version 暗号埋在返回值里）
-│     └── notes/      Day 17 新建 / Day 18 拆 5 文件     读写接口（同一函数同时吃 GET 和 POST /api/notes）
-│           ├── index.js   入口与路由（OPTIONS 先行、校验在前、连库在后）
-│           ├── http.js    Day 18 新建                响应形状的唯一出处（ok / fail / preflight + CORS 头）
-│           ├── db.js      Day 18 新建                连接池（懒加载 mysql2）+ UTC 时间互转
-│           ├── read.js    Day 18 新建                GET：解析参数 + 拼查询（从原 index.js 拆出）
-│           └── write.js   Day 18 新建                POST：校验 + 事务写入 + clientToken 去重（重复→409）
+│     └── notes/      Day 17 新建 / Day 19 拆 6 文件     读写接口（同一函数同时吃 GET 和 POST /api/notes）
+│           ├── index.js       入口与路由（OPTIONS 先行、校验在前、连库在后）
+│           ├── http.js        Day 18 新建            响应形状的唯一出处（ok / fail / preflight + CORS 头）
+│           ├── db.js          Day 18 新建            连接池（懒加载 mysql2）+ UTC 时间互转
+│           ├── repository.js  Day 19 新建            数据访问层：**唯一**出现 SQL 与 conn.query 的文件
+│           ├── read.js        Day 18 新建 / 19 瘦身   GET：解析参数 → 交给仓库（177 行 → 69 行）
+│           └── write.js       Day 18 新建 / 19 瘦身   POST：校验 + 409 语义 → 交给仓库
 ├── db/               Day 16 新建                     数据模型（MySQL）
 │     ├── README.md      设计说明：两张表存什么、靠哪个字段关联、字段类型为什么这么选
 │     ├── schema.sql     建表语句（幂等，重复执行不报错）
@@ -165,9 +166,9 @@ vibe-coding-lab/
 │     ├── render-check.js    Day 13 新增：可见层，真实浏览器渲染 23 项断言
 │     ├── mobile-probe.html  Day 14 新增：窄屏实测台（iframe 造真实 390px 视口）
 │     └── RUNLOG.md          自动留痕（不要手改）
-├── skills/notelab-api-check/     Day 17 新建 / Day 18 扩到 5 层  自检 Skill（云函数）
+├── skills/notelab-api-check/     Day 17 新建 / Day 19 扩到 7 层   自检 Skill（云函数）
 │     ├── SKILL.md           操作手册（分层的原因、没验到的条目、重复踩过的坑）
-│     └── check.cjs          Day 18 起 A 纯函数 / B SQL 语义 / C 入口分支 / D 写入校验 / E 真跑写入，149 项断言，零依赖（Node 22+ 内置 sqlite）
+│     └── check.cjs          A 纯函数 / B SQL 语义 / C 入口分支 / D 写入校验 / E 真跑写入 / F 分层守卫 / G health 冒烟，163 项断言，零依赖（Node 22+ 内置 sqlite）
 └── .gitignore        Day 2                           忽略规则（.env 不上传）
 ```
 
@@ -179,6 +180,8 @@ vibe-coding-lab/
 > Day 17 起服务端那一半已经准备好（`cloudbase-functions/notes/` + `db/`），
 > Day 18 又把**写接口**（POST）补上 —— 读和写现在是**同一个云函数**，因为你一个路径
 > `/api/notes` 只能绑一个函数，GET 和 POST 只能住在一起。
+> Day 19 给这个函数**分了层**：查数据库的代码全部收进 `repository.js`，
+> 上层只管"要什么、合不合法、失败算什么错"（分层图见 `TECH_DESIGN.md` 第 7.2 节）。
 > 但**前端还没切过去** —— 页面仍然只读 localStorage。
 > 切换的前提是先有一个真的 CloudBase 环境（见 `DEPLOY.md`）。
 > 切换时前端只该改取数那一处，因为接口返回的形状就是照着 `mock-data.js` 定的。
@@ -232,8 +235,14 @@ vibe-coding-lab/
    插出两行。正确做法是给 `notes.client_token` 建 `UNIQUE` 索引，
    插的时候撞键（`ER_DUP_ENTRY` / 1062）→ 回 `409`。
    拦住重复的**不是那段 if**，是数据库那条约束。详见 `db/README.md` 第二、三节
+18. **SQL 只许待在数据访问层**（Day 19 起）：全项目只有
+   `cloudbase-functions/notes/repository.js` 里出现 SQL 语句、`conn.query` 和事务调用。
+   上层（`read.js` / `write.js`）只调用仓库，自己一句 SQL 都不写 ——
+   这样"表里有什么列"就只被一个文件知道，换数据库 / 改表结构只动那一处。
+   这条约定**看不见**（写错了不会报错，只是分层慢慢烂掉），所以由自检
+   **F 层**直接读源码守着。改了分层先跑 `node skills/notelab-api-check/check.cjs`
 
-> 已知欠账：`app.js`（707 行）和云函数自检 `check.cjs`（811 行）都超过了约束 5 的 500 行。
+> 已知欠账：`app.js`（707 行）和云函数自检 `check.cjs`（934 行）都超过了约束 5 的 500 行。
 > 拆分方案记在 `CANDIDATES.md` 的 C7 / C8，本期先不动（拆分是重构，不和新功能混在一天）。
 
 ---

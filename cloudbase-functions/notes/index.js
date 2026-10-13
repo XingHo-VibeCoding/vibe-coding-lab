@@ -11,16 +11,23 @@
    调用地址（部署后）：
      https://<环境ID>.service.tcloudbase.com/api/notes
 
-   ---------- 文件地图 ----------
-     index.js   本文件：只做"分发 + 兜底"，业务逻辑不写这里
-     http.js    响应的形状（成功/失败/预检长什么样，只定义一次）
-     db.js      连接池 + 时间格式转换（只在这里碰连接）
-     read.js    GET  的业务逻辑
-     write.js   POST 的业务逻辑（含今天新增的重复提交保护）
-   ---------- 为什么拆开 ----------
-   README 约束 5：单个文件超过 500 行就拆开。
-   加了 POST 之后一个文件会明显超线，而且"读"和"写"本来就该分开 ——
-   它们的校验、错误码、失败后果都不一样。
+   ---------- 文件地图（Day 19 起）----------
+     index.js       本文件：只做"分发 + 兜底"，业务逻辑不写这里
+     http.js        响应的形状（成功/失败/预检长什么样，只定义一次）
+     db.js          连接池 + 时间格式转换（只在这里建连接池）
+     repository.js  数据访问层（Day 19 新建）：**唯一**出现 SQL 与 conn.query 的文件
+     read.js        GET  的业务逻辑：解析参数 → 交给仓库
+     write.js       POST 的业务逻辑：校验 + 重复提交保护（409）→ 交给仓库
+   ---------- 为什么这么拆 ----------
+   拆文件的直接原因是 README 约束 5（单个文件超过 500 行就拆开）。
+   但拆的**依据**是职责，不是行数：
+     - "读"和"写"分开：它们的校验、错误码、失败后果都不一样
+     - "数据怎么存取"再单独一层（repository.js）：上层不该知道表名和列名，
+       以后换数据库、或者改表结构（加列、把标签挪走），只动那一处。
+       自检 F 层会守住"SQL 不许漏回上层"这条规矩。
+   ---------- 请求从哪进、到哪出 ----------
+     event → index.js 分发 → （校验）→ 取连接 → read/write 调 repository
+           → repository 执行 SQL → write/read 组装结果 → http.js 包成响应
 
    ---------- 部署的三个前提 ----------
    见 db.js 文件头（VPC / 环境变量 / 自动暂停），那三条都在那一处写明了。
@@ -30,6 +37,7 @@ const pkg = require('./package.json');
 
 const { ok, fail, preflight, toResponse } = require('./http');
 const { getPool, toIsoUtc, toDbDateTime } = require('./db');
+const repo = require('./repository');
 const read = require('./read');
 const write = require('./write');
 
@@ -110,10 +118,10 @@ exports.main = async (event) => {
    云函数运行时不会用到它，留着无害。
    ------------------------------------------------------------ */
 exports.__test__ = {
-  // 读
+  // 读（参数解析在 read.js，SQL 组装在 repository.js —— Day 19 挪的）
   parseQuery: read.parseQuery,
-  buildWhere: read.buildWhere,
-  TAG_NONE: read.TAG_NONE,
+  buildWhere: repo.buildWhere,
+  TAG_NONE: repo.TAG_NONE,
   LIMIT_DEFAULT: read.LIMIT_DEFAULT,
   LIMIT_MAX: read.LIMIT_MAX,
   // 写

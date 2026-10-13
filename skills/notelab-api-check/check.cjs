@@ -1,7 +1,7 @@
 /* ============================================================
    check.cjs —— NoteLab 云函数自检（notelab-api-check）
    ============================================================
-   五层，按"离数据库多远"排：
+   七层，按"离数据库多远"排：
      A 层：直接 require 云函数文件，断言它**自己的**纯函数
            （GET 查询参数的边界、SQL 占位符与参数个数是否对得上、时间格式两个方向）
      B 层：把函数真实生成的 SQL 机械翻译成 SQLite 方言，跑真数据验 GET 的语义
@@ -9,13 +9,18 @@
            （方法不对 / 参数不合法 / 预检）。这几支最该测：
            写错了不会报错，只会变成"接口返回成功但什么都没做"。
      D 层：POST 的校验（parseBody / validateNote）——**全部拒绝分支逐条断言**，
-           并逐条检查提示语是中文（今天的完成标准里明写了这一条）
+           并逐条检查提示语是中文（Day 18 的完成标准里明写了这一条）
      E 层：用 SQLite 假造一个 mysql2 式的 conn，**真的跑 write.insertNote()**，
            验插入、事务回滚，以及最要紧的那条：
            **同一个 clientToken 第二次插入必须失败** —— 重复提交被拒的证明
+     F 层：分层守卫（Day 19 新增）——读源码断言"SQL 与 conn.* 只许待在 repository.js"。
+           重构最容易出的问题不是改错，是**过一阵又长回去**，
+           所以把"分层"这条看不见的约定也变成断言。
+     G 层：health 云函数冒烟（Day 19 新增）——"全接口回归"里的另一个接口
 
-   为什么值得这么写：A/C/D/E 跑的都是云函数文件里的真代码，不是另抄一份。
+   为什么值得这么写：A/C/D/E/G 跑的都是云函数文件里的真代码，不是另抄一份。
    E 层尤其如此 —— 它没重写写入逻辑，只把"连接"这一层换成替身。
+   F 层更特别：它不断言行为，断言**代码的形状**（哪一层写了什么）。
 
    ⚠️ 明确**没有**被验证的部分在文件末尾打印，不要当成已验过。
 
@@ -24,6 +29,7 @@
    ============================================================ */
 
 const path = require('node:path');
+const fs = require('node:fs');
 const { DatabaseSync } = require('node:sqlite');
 
 // 用相对路径（不用绝对路径）——这个脚本要跟着仓库走到任何机器上都能跑
@@ -770,6 +776,121 @@ async function layerC() {
 
 
 /* ============================================================
+   F 层：分层守卫（Day 19 新增）
+   ============================================================
+   规矩（写进 README 约束 18）：
+     **全项目只有 repository.js 里出现 SQL 语句和 conn.query / 事务调用。**
+   read.js / write.js 只调用仓库，自己一句 SQL 都不写。
+
+   为什么要把这件事写成断言：
+   重构最容易出的问题不是"这次改错了"（那会当场报错），
+   而是**过一阵又长回去** —— 某天为了让某个小功能跑起来，
+   顺手在 read.js 里插一句 conn.query，功能立刻就好了、测试也全绿，
+   没人发现分层已经名存实亡。等下次换数据库时才会发现"改一处"变成了"改八处"。
+
+   做法：直接读源码文本来断言"哪一层写了什么"。
+   这是这个脚本里唯一一层不看行为的 —— 因为它要守的本来就不是行为，是形状。
+   ★ 会先剥掉注释再找关键字：注释里写"这里为什么不用 SELECT"是正常的，
+     不该被当成"这一层有 SQL"（本项目的注释里确实到处在提 SQL）。
+   ============================================================ */
+console.log('\nF 层｜分层守卫 —— SQL 与 conn.* 只许待在 repository.js');
+
+const LAYER_FILES = ['index.js', 'http.js', 'db.js', 'read.js', 'write.js'];
+
+const sourceOf = (file) => fs.readFileSync(path.join(FN_DIR, file), 'utf8');
+
+/** 剥掉注释：块注释 + 行注释（行注释要求 // 前面不是冒号，免得误伤 https:// ）*/
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/gm, '$1');
+}
+
+const layerSrc = {};
+for (const f of LAYER_FILES) layerSrc[f] = stripComments(sourceOf(f));
+const repoCode = stripComments(sourceOf('repository.js'));
+
+function layerF() {
+  // -------- F-01 ~ F-05：上层文件里不许出现"跟数据库说话"的调用 --------
+  LAYER_FILES.forEach((f, i) => {
+    const hit = /conn\.(query|execute)\s*\(/.exec(layerSrc[f]);
+    check(
+      'F-' + String(i + 1).padStart(2, '0') + ' ' + f + ' 里没有 conn.query / conn.execute',
+      hit === null,
+      hit ? '发现了 ' + hit[0] : ''
+    );
+  });
+
+  // -------- F-06：事务也一样，只能待在仓库里 --------
+  const txFiles = LAYER_FILES.filter((f) =>
+    /conn\.(beginTransaction|commit|rollback)\s*\(/.test(layerSrc[f]));
+  check('F-06 上层文件里没有事务调用（beginTransaction / commit / rollback）',
+    txFiles.length === 0, txFiles.join(','));
+
+  // -------- F-07：剥掉注释后，上层文件里查不到 SQL 语句 --------
+  const sqlFiles = LAYER_FILES.filter((f) =>
+    /\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(layerSrc[f]));
+  check('F-07 上层文件里查不到 SQL 关键字（剥掉注释再查，避免误伤解释性文字）',
+    sqlFiles.length === 0, sqlFiles.join(','));
+
+  // -------- F-08：反着再守一条，防上面几条变成"空转"--------
+  // 上面 7 条都是"某处**不该有**什么"。万一将来把所有 SQL 挪走、
+  // 或者换个写法（比如用 string 拼接绕开关键字），它们照样全绿 —— 假绿。
+  // 所以必须同时断言"该有的地方确实有"。
+  const hasSelect = /SELECT/i.test(repoCode);
+  const hasInsert = /INSERT\s+INTO/i.test(repoCode);
+  const hasQuery = /conn\.query\s*\(/.test(repoCode);
+  const hasTx = /beginTransaction\s*\(/.test(repoCode);
+  check('F-08 ★ 仓库里确实有 SELECT / INSERT / conn.query / beginTransaction（否则上面几条是空转）',
+    hasSelect && hasInsert && hasQuery && hasTx,
+    ['SELECT=' + hasSelect, 'INSERT=' + hasInsert, 'query=' + hasQuery, 'tx=' + hasTx].join(' '));
+
+  // -------- F-09：数据访问层不该知道 HTTP --------
+  check('F-09 仓库不 require ./http（数据层不该知道「响应长什么样」）',
+    !/require\(\s*'\.\/http'\s*\)/.test(repoCode));
+
+  // -------- F-10：读/写两个上层确实都走仓库（而不是绕开它自己开一条路）--------
+  check('F-10 read.js / write.js 都 require 了 repository（证明它们真的经过这一层）',
+    /require\(\s*'\.\/repository'\s*\)/.test(layerSrc['read.js']) &&
+    /require\(\s*'\.\/repository'\s*\)/.test(layerSrc['write.js']));
+}
+
+
+/* ============================================================
+   G 层：health 云函数冒烟（Day 19 新增）
+   ============================================================
+   "全接口回归"里的另一个接口。health 不连库、逻辑简单，
+   但它恰恰是排查问题时**第一个要打的**那个（见 health/index.js 的说明）：
+   它要是坏了，后面所有"接口怎么不通了"的排查都会从错误的地方开始。
+   所以回归要把每个接口都盖到，简单的也不例外。
+   ============================================================ */
+console.log('\nG 层｜health 冒烟 —— 另一个已上线的接口一起回归');
+
+async function layerG() {
+  const health = require(path.join(__dirname, '..', '..', 'cloudbase-functions', 'health', 'index.js'));
+  const healthPkg = require(path.join(__dirname, '..', '..', 'cloudbase-functions', 'health', 'package.json'));
+
+  const a = await health.main({}, { namespace: 'self-check-env' });
+
+  check('G-01 health 返回 ok=true / service=notelab（认人用的暗号对得上）',
+    !!a && a.ok === true && a.service === 'notelab', JSON.stringify(a));
+
+  check('G-02 health 的 version 与它自己的 package.json 一致（发布对版本）',
+    !!a && a.version === healthPkg.version,
+    (a && a.version) + ' vs ' + healthPkg.version);
+
+  // 时间戳是"现算的"还是"缓存"的分界线（DEPLOY.md 部署后核对也靠这一条）
+  await new Promise((r) => setTimeout(r, 5));
+  const b = await health.main({}, {});
+  check('G-03 health 的 time 每次调用都不同（说明是现算的，不是缓存的旧响应）',
+    !!a && !!b && a.time !== b.time, (a && a.time) + ' / ' + (b && b.time));
+
+  check('G-04 health 能报出环境标识（公网上地址长得都差不多，靠它认环境）',
+    !!a && a.env === 'self-check-env', a && String(a.env));
+}
+
+
+/* ============================================================
    结果
    ============================================================ */
 function finish() {
@@ -804,6 +925,8 @@ function finish() {
 
 layerE()
   .then(layerC)
+  .then(layerF)
+  .then(layerG)
   .then(finish)
   .catch((err) => {
     console.error('\n自检脚本自己崩了：', err);
