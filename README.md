@@ -144,6 +144,8 @@ vibe-coding-lab/
 ├── DESIGN_REVIEW.md  Day 9 新建                      设计审查：规则、问题、修复对照
 ├── TEST_PLAN.md      Day 14 新建                     真人轻量测试清单（照念的开场白 + 6 个任务 + 观察项）
 ├── TEST_RECORD.md    Day 14 新建                     测试记录表（被测人填一次，结论进这里）
+├── WEEK3_ACCEPTANCE.md  Day 21 新建                 第 3 周验收表（逐项证据 + 缺项如实标 FAIL + 同伴交叉验证表单）
+├── DEMO_SCRIPT.md    Day 21 新建                     3 分钟演示提纲（用户问题 → 核心流程 → 提示词改写 → 验证方式）
 ├── api-contract.md   Day 15 新建 / Day 17-18 续       接口契约（字段名照抄 mock-data.js；Day 17 补 limit，Day 18 补 POST 与 409）
 ├── DEPLOY.md         Day 15 新建 / Day 17-18 续       部署指南（注册 / health / 前端托管 / 附录：建库 + 部署读接口 + 写接口）
 ├── cloudbase-functions/
