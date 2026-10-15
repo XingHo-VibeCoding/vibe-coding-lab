@@ -173,7 +173,8 @@ const el = {
   recentTip: document.getElementById('recent-tip'),
   recentEmpty: document.getElementById('recent-empty'),
   reviewStatus: document.getElementById('review-status'), // 「回顾」视图的数据状态提示
-  demoEntry: document.getElementById('demo-entry')        // 「全部笔记」里进演示模式的入口
+  demoEntry: document.getElementById('demo-entry'),       // 「全部笔记」里进演示模式的入口
+  dataSource: document.getElementById('data-source')      // Day 20：数据来源 + 最后更新时间
 };
 
 function showHint(text, isError = false, duration = 3000) {
@@ -660,9 +661,35 @@ function setPageState(next, errorMsg = '') {
 }
 
 /* ------------------------------------------------------------
-   启动：两种数据来源
+   Day 20 余力加练：告诉自己"这批数据是哪来的、什么时候取的"
+   ------------------------------------------------------------
+   为什么值得占一行：接了真接口之后，"页面上的数据是旧的"会变成一种新故障 ——
+   控制台里改了数据、页面刷新却没变，这时你得先知道"页面这份数据是几点取的"，
+   才能判断是缓存、还是请求压根没发出去。
+   只在接口模式下显示：本地存储模式没有"取数时刻"这回事。
+   ------------------------------------------------------------ */
+function updateSourceLine() {
+  if (!el.dataSource) return;
+  const api = (typeof window !== 'undefined') ? window.NoteLabApi : null;
+  if (!api || !api.isEnabled()) {
+    el.dataSource.hidden = true;
+    el.dataSource.textContent = '';
+    return;
+  }
+  const now = new Date();
+  const hhmmss = [now.getHours(), now.getMinutes(), now.getSeconds()]
+    .map((n) => String(n).padStart(2, '0'))
+    .join(':');
+  el.dataSource.hidden = false;
+  el.dataSource.textContent = '数据来源：公网接口 ' + api.API_BASE + ' · 最后更新 ' + hhmmss;
+}
+
+/* ------------------------------------------------------------
+   启动：三种数据来源
    - 演示模式（网址带 ?demo=1）：用 mock-data.js 的假数据，可预览四种状态
+   - 接口模式（配了地址，见 api.js）：从公网云函数取真实数据（Day 20）
    - 正常模式：用浏览器本地存储里的真实笔记（Day 7 的逻辑不变）
+   ★ 默认还是第三种。没配地址时，这次改动对页面行为的影响是零。
    ------------------------------------------------------------ */
 function bootstrap() {
   updateCounter();
@@ -695,9 +722,26 @@ function bootstrap() {
     return;
   }
 
-  // 正常模式：数据在本地，同步就能取到，所以不存在"加载中"这一态
-  loadNotes();
-  setPageState(notes.length > 0 ? 'success' : 'empty');
+  const api = (typeof window !== 'undefined') ? window.NoteLabApi : null;
+
+  // 接口模式：数据在网上，要等 —— 所以这里**有**"加载中"这一态
+  // （本地存储是同步的，没有加载中；这一点是接了真接口之后才出现的差别）
+  if (api && api.isEnabled()) {
+    setPageState('loading');
+    api.fetchApiNotes().then((res) => {
+      if (!res.ok) {
+        setPageState('error', res.message);   // 出错：说明原因 + 给"重试"
+        return;
+      }
+      notes = res.notes;
+      setPageState(notes.length > 0 ? 'success' : 'empty');
+      updateSourceLine();
+    });
+  } else {
+    // 正常模式：数据在本地，同步就能取到，所以不存在"加载中"这一态
+    loadNotes();
+    setPageState(notes.length > 0 ? 'success' : 'empty');
+  }
 
   if (!storageAvailable) {
     showHint('当前浏览器不允许本地存储（可能是隐私模式），记录不会被保留', true, 0);

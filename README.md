@@ -137,7 +137,8 @@ vibe-coding-lab/
 ├── index.html        Day 2 占位页 → Day 7 重写 → Day 13 拆三视图   页面结构
 ├── styles.css        Day 7 新建 / Day 9 审查 / Day 13   样式（Day 9 按 6 条设计规则审查修复；Day 13 加导航与视图样式）
 ├── app.js            Day 7 新建 / 后续多次           全部逻辑（Day 8 四态与卡片；Day 9 标签与骨架；Day 13 hash 路由与三视图）
-├── mock-data.js      Day 8 新建                      假数据与"假接口"（第 3 周换真实接口）
+├── mock-data.js      Day 8 新建                      假数据与"假接口"（演示模式用）
+├── api.js            Day 20 新建                     真实接口的数据来源（默认不启用，配了地址才走网络）
 ├── README.md         Day 7 新建 / 后续多次           本文件（运行说明）
 ├── CANDIDATES.md     Day 8 新建                      下期候选清单（新想法的唯一去处）
 ├── DESIGN_REVIEW.md  Day 9 新建                      设计审查：规则、问题、修复对照
@@ -166,6 +167,9 @@ vibe-coding-lab/
 │     ├── render-check.js    Day 13 新增：可见层，真实浏览器渲染 23 项断言
 │     ├── mobile-probe.html  Day 14 新增：窄屏实测台（iframe 造真实 390px 视口）
 │     └── RUNLOG.md          自动留痕（不要手改）
+├── skills/notelab-api-wiring/    Day 20 新建                    自检 Skill（前端接线）
+│     ├── SKILL.md           操作手册（三种"取不到数据"的分辨法、验不到的部分）
+│     └── check.cjs          配置 / 拆信封 / 形状校验 / 出错提示 / 真发请求，24 项断言，零依赖（Node 22+ 自带 fetch）
 ├── skills/notelab-api-check/     Day 17 新建 / Day 19 扩到 7 层   自检 Skill（云函数）
 │     ├── SKILL.md           操作手册（分层的原因、没验到的条目、重复踩过的坑）
 │     └── check.cjs          A 纯函数 / B SQL 语义 / C 入口分支 / D 写入校验 / E 真跑写入 / F 分层守卫 / G health 冒烟，163 项断言，零依赖（Node 22+ 内置 sqlite）
@@ -241,8 +245,15 @@ vibe-coding-lab/
    这样"表里有什么列"就只被一个文件知道，换数据库 / 改表结构只动那一处。
    这条约定**看不见**（写错了不会报错，只是分层慢慢烂掉），所以由自检
    **F 层**直接读源码守着。改了分层先跑 `node skills/notelab-api-check/check.cjs`
+19. **出错提示要告诉用户"去哪看"**（Day 20 起）：面向用户的错误文案不许只写"出错了"。
+   同一句"取不到数据"至少是三种病（跨域没过 / 地址不对 / 返回形状不对），
+   治法完全不同 —— 认错方向就白查半天。所以提示里要写清**看哪里、什么现象对应什么病**
+   （本项目 `api.js` 的 `corsHint()` 就是照这个写的，接线自检 D 段专盯它）
+20. **接真接口的开关默认关着**（Day 20 起）：`api.js` 里没配地址时 `isEnabled()` 返回 false，
+   页面照旧读 localStorage。这样"接线"这件事不会因为代码合进来就改动线上行为 ——
+   接线自检 A-01 守的就是这条底线
 
-> 已知欠账：`app.js`（707 行）和云函数自检 `check.cjs`（934 行）都超过了约束 5 的 500 行。
+> 已知欠账：`app.js`（751 行）和云函数自检 `check.cjs`（934 行）都超过了约束 5 的 500 行。
 > 拆分方案记在 `CANDIDATES.md` 的 C7 / C8，本期先不动（拆分是重构，不和新功能混在一天）。
 
 ---

@@ -89,6 +89,10 @@
         <section class="list-area">
           <div id="list-status" class="list-status"></div>
 
+          <!-- Day 20 余力加练：一眼看出"这批数据是哪来的、什么时候取的"
+               只在配了接口地址时显示；本地存储模式下没有"取数时刻"可言，保持隐藏 -->
+          <p id="data-source" class="data-source" hidden></p>
+
           <!-- 加载中 / 出错 两种状态的面板（Day 8）-->
           <div id="state-panel" class="state-panel" hidden></div>
 
@@ -124,6 +128,7 @@
   </main>
 
   <script src="mock-data.js"></script>
+  <script src="api.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

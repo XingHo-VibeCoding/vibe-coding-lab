@@ -213,6 +213,10 @@ body {
    ------------------------------------------------------------ */
 .list-area { flex: 1; min-width: 0; }
 .list-status { font-size: 12px; color: var(--text-weak); margin-bottom: var(--space-2); }
+
+/* Day 20：数据来源 + 最后更新时间。用 --text-faint（5.10:1，过 4.5 门槛），
+   和上面 .list-status 同一档的次要信息，不抢正文的注意力 */
+.data-source { font-size: 12px; color: var(--text-faint); margin: 0 0 var(--space-2); }
 .note-list { list-style: none; margin: 0; padding: 0; }
 .note-item {
   background: var(--card);

@@ -1,4 +1,4 @@
-# DEPLOY.md｜部署指南（Day 15 立，Day 17 续，Day 18 补写接口）
+# DEPLOY.md｜部署指南（Day 15 立，Day 17 续，Day 18 补写接口，Day 20 补公网首页）
 
 > 注册那一步（课程附录 M）只能你自己做：要登录腾讯账号、手机验证。
 > 装好后剩下的每一步，这份文件给出控制台点法。**控制台界面和我描述的对不上时，
@@ -63,13 +63,15 @@
 ## ③ 部署前端 mock 版页面（静态托管）
 
 1. 控制台左侧「静态网站托管」→ 开通（首次会提示，按量付费基础版即可）
-2. 「文件管理」→「上传文件夹」不行的话就**逐个上传文件**——只需要这 4 个：
+2. 「文件管理」→「上传文件夹」不行的话就**逐个上传文件**——需要这 5 个
+   （Day 20 起多了 `api.js`，少传它页面会取不到云端数据）：
 
 ```
 index.html     页面结构
 styles.css     样式
 app.js         全部逻辑
 mock-data.js   假数据（演示模式用）
+api.js         Day 20 新增：真实接口的取数（含接口地址配置）
 ```
 
    > ⚠️ `skills/`、`*.md`、`cloudbase-functions/` 都**不用传**——那是开发用的，不是页面要跑的。
@@ -361,3 +363,69 @@ curl -X POST "https://<环境ID>.service.tcloudbase.com/api/notes" \
 2. 第 2 步"重复被拒"的返回
 3. 日志里有报错的话，截那几行
 
+
+---
+
+## 附录：Day 20 —— 公网首页显示真实数据
+
+> ⚠️ **这一节目前执行不了**，原因还是第 ① 步：环境 ID 到今天仍是占位符
+> （`api-contract.md` 第 15 行的 Base URL 还写着 `<环境ID>`）。
+> 下面的步骤已经按可照抄的程度写好，拿到环境 ID 后当天就能走完。
+
+### ① 确认云函数可用 + 跨域已配
+
+先后顺序别换 —— **先认服务在不在，再谈跨域**：
+
+1. 浏览器打开 `https://<环境ID>.service.tcloudbase.com/api/health`
+   → 该看到 `{"ok":true,"service":"notelab",...}`。看不到就说明环境/网关有问题，
+   **不是跨域问题**，往回查 Day 15 的部署步骤
+2. 再打开 `https://<环境ID>.service.tcloudbase.com/api/notes`
+   → 该看到 `{"ok":true,"notes":[...]}`
+3. **跨域那一眼怎么看**：在这个页面上按 F12 → Network，点那条 `/api/notes` →
+   Response Headers 里应当有：
+
+   ```
+   Access-Control-Allow-Origin: *
+   Access-Control-Allow-Methods: GET, POST, OPTIONS
+   ```
+
+   这三行是 Day 18 写在 `cloudbase-functions/notes/http.js` 里的，**不需要今天再配**。
+   ★ 如果页面（而不是直接访问地址）取不到数据，但直接访问地址有数据 —— 那就是跨域，
+   改服务端，前端改什么都没用。
+
+### ② 本地接线（这一块**已经做完并验过**）
+
+`api.js` 已建好：默认不启用，配了地址才走网络。
+本机自检 `node skills/notelab-api-wiring/check.cjs` → **24/24 通过**（含真发 HTTP 请求）。
+前端既有回归同时确认没被改坏：`run.js` 34/34、`render-check.js` 23/23。
+
+### ③ 上传：填地址 + 传 5 个文件
+
+1. 打开 `api.js`，把第 31 行那一处改成你的地址：
+
+   ```js
+   const CONFIGURED_BASE = 'https://<环境ID>.service.tcloudbase.com';
+   ```
+
+2. 静态托管上传 **5 个**文件（比 Day 15 多一个 `api.js`）：
+   `index.html` / `styles.css` / `app.js` / `mock-data.js` / `api.js`
+
+### ④ 逐项验证（三条，缺一条不算完成）
+
+| # | 验什么 | 怎么看 |
+|---|---|---|
+| 1 | **公网首页展示数据库真实数据** | 打开静态托管的公网地址，列表里应是 `db/seed.sql` 灌进去的那些笔记，**不是** mock 那 10 条 |
+| 2 | **控制台改数据，刷新跟着变** | 在 SQL 编辑器里 `UPDATE` 一条笔记的正文 → 刷新页面 → 页面上的正文跟着变 |
+| 3 | **F12 里请求地址是公网地址** | Network 里那条请求的地址应是 `https://<环境ID>.service.tcloudbase.com/api/notes`，不是 localhost |
+
+> 页面顶部那行小字「数据来源：公网接口 … · 最后更新 HH:MM:SS」是余力加练加的，
+> 一眼就能看出这批数据是哪来的、几点取的 —— 排查"刷新了却没变"时先看它。
+
+### 卡住时的分辨法（今天要掌握的那件事）
+
+| 现象 | 是什么病 | 改哪里 |
+|---|---|---|
+| Console 有带 `CORS` 的红字；Network 那条 200 但 Response 空 | 跨域没过 | 服务端 `http.js` 的响应头 |
+| Network 那条 404 / 502 | 地址不对或服务不在 | 核对环境 ID 与路径 |
+| 请求 200、有内容，但页面空白或报"形状不一致" | 返回形状不对 | 对照 `api-contract.md`，看 `api.js` 的 `unwrapGatewayPayload` |
+| 页面正常、但显示的还是 mock 那 10 条 | 地址没配上 | 检查 `api.js` 第 31 行，以及托管里到底传没传 `api.js` |
