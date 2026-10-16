@@ -429,3 +429,100 @@ curl -X POST "https://<环境ID>.service.tcloudbase.com/api/notes" \
 | Network 那条 404 / 502 | 地址不对或服务不在 | 核对环境 ID 与路径 |
 | 请求 200、有内容，但页面空白或报"形状不一致" | 返回形状不对 | 对照 `api-contract.md`，看 `api.js` 的 `unwrapGatewayPayload` |
 | 页面正常、但显示的还是 mock 那 10 条 | 地址没配上 | 检查 `api.js` 第 31 行，以及托管里到底传没传 `api.js` |
+
+---
+
+## 附录六｜Day 22：改（PATCH）与删（DELETE）接口
+
+四个方法现在都在**同一个云函数**里（一个路径只能绑一个函数，见 Day 17 的说明）。
+上传的仍然是那 6 个文件，`index.js` 里的路由按 `httpMethod` 分发。
+
+### ① 部署前：库里要先有软删除那两列
+
+**⚠️ 新表不用管，老表要手动补两列。** `db/schema.sql` 的 `CREATE TABLE` 已经带上
+`is_deleted` / `deleted_at`，但 MySQL **不支持** `ADD COLUMN IF NOT EXISTS`，
+所以"给已经建好的表补列"那段 `ALTER TABLE` 在文件里是**注释状态**，需要你手动跑：
+
+```sql
+ALTER TABLE notes
+  ADD COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0
+    COMMENT '软删除标记：0=正常，1=已删除',
+  ADD COLUMN deleted_at DATETIME(3) NULL
+    COMMENT '删除时间，UTC';
+```
+
+> 重复执行会报 `Duplicate column name` —— **这不是出错**，是 MySQL 在告诉你已经有了。
+> （Day 18 那次补 `client_token` 也是同一句，两列可以一次加完。）
+
+跑完确认这两列在位 —— `db/verify.sql` 第 ⑧ 段：
+
+```sql
+SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_TYPE, COLUMN_DEFAULT
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notes'
+  AND COLUMN_NAME IN ('is_deleted', 'deleted_at');
+```
+
+该看到两行。看不到就说明 ALTER 没跑成功，**DELETE 会直接报 500**。
+
+### ② 部署：上传 6 个文件
+
+```
+cloudbase-functions/notes/ 下的 index.js / http.js / db.js / repository.js / read.js / write.js
+```
+
+★ 别漏 `http.js`：Day 22 改了它的 CORS 头，加了 `PATCH, DELETE`。
+漏传的话前端的 PATCH / DELETE 会在**预检**就被浏览器拦掉，
+而报错的样子是"接口不通"—— 排查时很容易朝错的方向走。
+
+### ③ 四条 curl（把 `<环境ID>` 换成真的）
+
+```bash
+# 1) 查列表（GET）
+curl "https://<环境ID>.service.tcloudbase.com/api/notes?limit=5"
+
+# 2) 新建（POST）—— 换一个 clientToken 就能再建一条
+curl -X POST "https://<环境ID>.service.tcloudbase.com/api/notes" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Day 22 联调：这条会被改、然后被删 #联调","clientToken":"day22-a","tags":["联调","待删"]}'
+
+# 3) 改（PATCH）—— id 用第 2 步返回的那个；只给 content，标签会原样保留
+curl -X PATCH "https://<环境ID>.service.tcloudbase.com/api/notes?id=n_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Day 22 联调：正文改过了"}'
+
+# 4) 删（DELETE）—— 只打标记，行还在库里
+curl -X DELETE "https://<环境ID>.service.tcloudbase.com/api/notes?id=n_xxx"
+```
+
+该看到的：
+
+| 步骤 | 预期 |
+|---|---|
+| 2 | `{"ok":true,"note":{...}}`，库里多一行 |
+| 3 | `{"ok":true,"note":{...}}`，`content` 变了、`tags` 还是 `["联调","待删"]`、`createdAt` **没变** |
+| 4 | `{"ok":true,"deleted":{"id":"n_xxx","at":"2026-…Z"}}` |
+| 4 之后 | 再跑第 1 步，这条**查不到了** |
+| 4 之后 | 再跑一次第 4 步 → `404`（已经删过的不能再删） |
+
+### ④ 软删除的核对（三条，缺一条不算验过）
+
+| # | 验什么 | 怎么看 |
+|---|---|---|
+| 1 | **行还在库里** | `SELECT COUNT(*) FROM notes;` 删之前之后**一样多**；而 `WHERE is_deleted = 0` 那个数少了 1 |
+| 2 | **标记打上了** | `SELECT id, is_deleted, deleted_at FROM notes WHERE is_deleted = 1;` 能看到刚删的那条 |
+| 3 | **能找回来** | 跑 `db/verify.sql` 第 ⑨ 段那句 `UPDATE notes SET is_deleted = 0, deleted_at = NULL WHERE id = 'n_xxx';` → 第 1 步的列表里它又出现了，标签也在 |
+
+> 第 3 条是软删除的全部意义：**"删错了能找回"不是一句承诺，是被真的跑过一遍的。**
+> 界面上的「撤销」按钮还没做（属 `CANDIDATES.md` 的 C2，未批准不开工），
+> 现在的后悔药就是这句人工 SQL。
+
+### 卡住时的分辨法
+
+| 现象 | 是什么病 | 改哪里 |
+|---|---|---|
+| DELETE 后列表还有它 | 查询没带 `is_deleted = 0` | `repository.withNotDeleted()`，别处不许自己拼 |
+| PUT / 任意不支持的方法 → 405 | 正常（故意只支持四个方法） | —— |
+| PATCH 返回 404 但这条明明在 | 它可能已经被软删除了 | 查 `is_deleted`，或用 ④ 第 3 条恢复 |
+| 前端 PATCH / DELETE 报跨域 | 预检没答 PATCH/DELETE | `http.js` 的 `Access-Control-Allow-Methods`（自检 H-43 守着） |
+| 控制台里 DELETE 报 500，说未知列 `is_deleted` | `schema.sql` 的 ALTER 没跑 | 回 ① 补跑建表语句 |

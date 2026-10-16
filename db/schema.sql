@@ -23,11 +23,30 @@ CREATE TABLE IF NOT EXISTS notes (
                COMMENT '创建时间，毫秒精度，库里一律存 UTC。用 DATETIME 不用 TIMESTAMP：TIMESTAMP 有 2038 年上限，且会随会话时区自动换算',
   client_token VARCHAR(64)   NULL
                COMMENT '提交幂等键（Day 18）：同一次提交被重发时，靠这一列的唯一索引把第二遍挡掉。NULL = 不是通过 POST 接口写进来的（比如 seed 数据）',
+  is_deleted   TINYINT(1)    NOT NULL DEFAULT 0
+               COMMENT '软删除标记（Day 22）：0=正常，1=已删除。**DELETE 只改这个标记，不真删行**，所以删错了能改回来。所有查询都带 is_deleted = 0',
+  deleted_at   DATETIME(3)   NULL
+               COMMENT '删除时间（Day 22），毫秒精度 UTC。只在 is_deleted=1 时有值；留着是为了以后排查"什么时候删的"，也是恢复时的线索',
   PRIMARY KEY (id),
   UNIQUE KEY uk_notes_client_token (client_token),
   KEY idx_notes_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  COMMENT='笔记：列表按 created_at 倒序显示';
+  COMMENT='笔记：列表按 created_at 倒序显示；删除是软删除（is_deleted）';
+
+-- ★ 关于 is_deleted 的三个要点（Day 22）
+--
+-- 1) 为什么"删除"不真删：新增错了是"多一条"，删除错了是"少一条"，
+--    而少掉的东西**找不回来**。软删除把 DELETE 从不可逆操作变成可逆操作 ——
+--    这是删除这件事唯一真正的后悔药（界面上的二次确认只能防手滑，防不了误判）。
+--
+-- 2) 为什么是 TINYINT(1) 而不是 DATETIME 判空：
+--    "有没有被删"是一个是非，用布尔最直白；时间单独一列，两件事分开存。
+--    也有人只用 deleted_at（NULL=没删），但那样 "WHERE deleted_at IS NULL"
+--    没法建有效索引，而且读代码时要绕一下才明白意图。
+--
+-- 3) ★ 代价（必须知道）：SELECT COUNT(*) FROM notes **不会因为删除而减少**，
+--    因为行还在。要数"实际有几条"必须写 WHERE is_deleted = 0
+--    （db/verify.sql 里有现成的一句）。以后做任何统计都别忘了这一条。
 
 -- ★ 关于 client_token 的两个要点（Day 18）
 --
@@ -52,6 +71,13 @@ CREATE TABLE IF NOT EXISTS notes (
 --   ADD COLUMN client_token VARCHAR(64) NULL
 --     COMMENT '提交幂等键（Day 18）：同一次提交被重发时靠唯一索引挡掉第二遍',
 --   ADD UNIQUE KEY uk_notes_client_token (client_token);
+--
+-- ⚠️ Day 22：还要再加软删除那两列。同上，重复执行报 "Duplicate column name" 属正常。
+-- ALTER TABLE notes
+--   ADD COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0
+--     COMMENT '软删除标记：0=正常，1=已删除',
+--   ADD COLUMN deleted_at DATETIME(3) NULL
+--     COMMENT '删除时间，UTC';
 
 
 -- ---------- 表二：note_tags（标签关联）----------

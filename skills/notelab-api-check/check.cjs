@@ -1,7 +1,7 @@
 /* ============================================================
    check.cjs —— NoteLab 云函数自检（notelab-api-check）
    ============================================================
-   七层，按"离数据库多远"排：
+   八层，按"离数据库多远"排：
      A 层：直接 require 云函数文件，断言它**自己的**纯函数
            （GET 查询参数的边界、SQL 占位符与参数个数是否对得上、时间格式两个方向）
      B 层：把函数真实生成的 SQL 机械翻译成 SQLite 方言，跑真数据验 GET 的语义
@@ -17,8 +17,10 @@
            重构最容易出的问题不是改错，是**过一阵又长回去**，
            所以把"分层"这条看不见的约定也变成断言。
      G 层：health 云函数冒烟（Day 19 新增）——"全接口回归"里的另一个接口
+     H 层：PATCH / DELETE 也真的跑一遍（Day 22 新增）——重点验"删了但行还在"，
+           以及"一句 UPDATE 能改回来"。删除是最容易出事的操作，值得单独一层。
 
-   为什么值得这么写：A/C/D/E/G 跑的都是云函数文件里的真代码，不是另抄一份。
+   为什么值得这么写：A/C/D/E/G/H 跑的都是云函数文件里的真代码，不是另抄一份。
    E 层尤其如此 —— 它没重写写入逻辑，只把"连接"这一层换成替身。
    F 层更特别：它不断言行为，断言**代码的形状**（哪一层写了什么）。
 
@@ -366,6 +368,9 @@ db.exec(`
     content      TEXT NOT NULL,
     created_at   TEXT NOT NULL,
     client_token TEXT,
+    -- Day 22 软删除两列，与 db/schema.sql 对齐（DELETE 只改标记，行还在）
+    is_deleted   INTEGER NOT NULL DEFAULT 0,
+    deleted_at   TEXT,
     UNIQUE (client_token)
   );
   CREATE TABLE note_tags (
@@ -410,9 +415,12 @@ function queryNotes(keyword, tag, limit) {
   const parsed = T.parseQuery({ keyword: keyword, tag: tag, limit: limit });
   if (parsed.error) throw new Error('parseQuery 报错：' + parsed.error);
   const built = T.buildWhere(parsed.keyword, parsed.tag);
+  // ★ Day 22：连"跳过已删除的"这半句也调真函数 withNotDeleted，不在这里自己拼。
+  //   自己拼 'AND is_deleted = 0' 拼错了不会报错，只会让"已删的又冒出来"，
+  //   而 B 层会跟着一起绿 —— 那正是最难发现的假绿。
   const sql = `SELECT n.id, n.content, n.created_at
                  FROM notes AS n
-                 ${toSqlite(built.whereSql)}
+                 ${toSqlite(T.withNotDeleted(built.whereSql))}
                 ORDER BY n.created_at DESC
                 LIMIT ?`;
   const noteRows = db.prepare(sql).all(...built.params, parsed.limit);
@@ -553,6 +561,19 @@ function makeConn(sqlite, opts) {
         for (const r of rows) for (const v of r) flat.push(v);
       }
 
+      // ★ Day 22 补的第二种方言翻译：`IN (?)` 的数组展开。
+      //   mysql2 的 query() 会把数组参数展开成 (?, ?, ?)，SQLite 不会 ——
+      //   不翻译的话 findNoteById → selectTags 会直接报 Unknown named parameter。
+      //   （E 层没踩到，因为 insertNote 不走 selectTags。）
+      while (s.indexOf('IN (?)') !== -1) {
+        const at = flat.findIndex((v) => Array.isArray(v));
+        if (at === -1) break;
+        const arr = flat[at];
+        const holders = arr.length ? arr.map(() => '?').join(', ') : 'NULL';
+        s = s.replace('IN (?)', 'IN (' + holders + ')');
+        flat = flat.slice(0, at).concat(arr, flat.slice(at + 1));
+      }
+
       // 故障注入：用来验"标签写失败时笔记要一起回滚"
       if (o.failOn && o.failOn.test(s)) {
         throw new Error('自检注入的写入失败');
@@ -562,8 +583,11 @@ function makeConn(sqlite, opts) {
         if (s.trim().slice(0, 6).toUpperCase() === 'SELECT') {
           return [sqlite.prepare(s).all(...flat), []];
         }
-        sqlite.prepare(s).run(...flat);
-        return [{ affectedRows: 1 }, []];
+        // ★ Day 22：affectedRows 要报真实值，不能固定给 1。
+        //   markNoteDeleted() 是靠 affectedRows 判断"到底有没有改到一行"的，
+        //   替身固定返回 1 的话，那个判断就永远成立、永远绿 —— 等于没测。
+        const info = sqlite.prepare(s).run(...flat);
+        return [{ affectedRows: info.changes }, []];
       } catch (err) {
         // 把 SQLite 的唯一键冲突翻译成 mysql2 的错误形状
         if (/UNIQUE constraint failed/i.test(String(err && err.message))) {
@@ -703,14 +727,15 @@ async function layerC() {
   check('C-01 POST 没有请求体 → 400（不是 405，也不是假装成功）',
     post.statusCode === 400 && JSON.parse(post.body).ok === false, JSON.stringify(post));
 
+  // Day 22 起支持四个方法，PUT 仍然不支持（PUT 语义是"整体替换"，
+  // 我们要的是"改其中几个字段"= PATCH，多一个 PUT 只会多一种误用）。
   const put = await api.main({ httpMethod: 'PUT' });
-  check('C-02 PUT → 405（PATCH/DELETE 属于第 4 周，今天明确不做）',
+  check('C-02 PUT → 405（四个方法里没有它）',
     put.statusCode === 405, JSON.stringify(put));
 
-  check('C-03 405 的 message 是中文，且写明支持哪两个方法',
+  check('C-03 405 的 message 是中文，且写明支持哪四个方法',
     hasChinese(JSON.parse(put.body).message) &&
-    JSON.parse(put.body).message.includes('GET') &&
-    JSON.parse(put.body).message.includes('POST'),
+    ['GET', 'POST', 'PATCH', 'DELETE'].every((m) => JSON.parse(put.body).message.includes(m)),
     JSON.parse(put.body).message);
 
   // 网关给什么大小写都不该把一个正常 GET 判成 405
@@ -746,18 +771,21 @@ async function layerC() {
     (() => { try { return typeof JSON.parse(post.body) === 'object'; } catch (e) { return false; } })());
 
   check('C-10 响应头带上了跨域预检需要的几个头（前端将来才不会被浏览器拦）',
-    String(post.headers['Access-Control-Allow-Methods']).includes('POST') &&
-    String(post.headers['Access-Control-Allow-Methods']).includes('OPTIONS'),
+    ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'].every(
+      (m) => String(post.headers['Access-Control-Allow-Methods']).includes(m)),
     String(post.headers['Access-Control-Allow-Methods']));
 
   // 这条是"给自检自己上的保险"：常量或函数一旦改名，
   // 上面那些断言会读到 undefined 而静默失败 —— 那才是最坏的情况（脚本假绿）。
   // （parseParams 改名 parseQuery、删掉 TAG_NONE_SENTINEL，都是被这条真拦下来的。）
   const need = [
-    'parseQuery', 'buildWhere', 'TAG_NONE', 'LIMIT_DEFAULT', 'LIMIT_MAX',
+    'parseQuery', 'buildWhere', 'withNotDeleted', 'TAG_NONE', 'LIMIT_DEFAULT', 'LIMIT_MAX',
     'parseBody', 'validateNote', 'insertNote', 'newId', 'isDuplicateToken',
     'MAX_LENGTH', 'MAX_TAGS', 'MAX_TAG_LENGTH', 'TOKEN_MIN', 'TOKEN_MAX',
-    'DUPLICATE_MESSAGE', 'toIsoUtc', 'toDbDateTime', 'ok', 'fail'
+    'DUPLICATE_MESSAGE', 'toIsoUtc', 'toDbDateTime', 'ok', 'fail',
+    // Day 22 新增：改 / 删
+    'validatePatch', 'updateNote', 'deleteNote', 'pickId', 'normalizeTags',
+    'NOT_FOUND_MESSAGE', 'MISSING_ID_MESSAGE'
   ];
   const missing = need.filter((k) => T[k] === undefined);
   check('C-11 导出面没变：__test__ 里该有的都在（防改名让自检悄悄失效）',
@@ -772,6 +800,205 @@ async function layerC() {
     JSON.stringify(T.ok({ notes: [] })) === '{"statusCode":200,"payload":{"ok":true,"notes":[]}}' &&
     JSON.stringify(T.fail(409, '重复提交')) === '{"statusCode":409,"payload":{"ok":false,"message":"重复提交"}}',
     JSON.stringify(T.ok({ notes: [] })));
+}
+
+
+/* ============================================================
+   H 层：PATCH / DELETE 真的跑一遍（Day 22 新增）
+   ============================================================
+   和 E 层同一套办法：SQLite 替身顶掉"连接"这一层，
+   跑的是云函数里**真的那份** updateNote() / deleteNote()。
+
+   今天最要紧的三条，都写成了断言：
+     H-14 删完之后**行还在库里**（软删除，不是真删）
+     H-16 删完之后 GET 列表里查不到（跳过的那一半生效了）
+     H-19 一句 UPDATE 就能改回来（"删错了还能找回"不是一句承诺，是被跑过的）
+
+   顺序上，H 放在 C 之后、F 之前：它要往库里写东西，
+   而 F 层只看源码文本，不受影响。
+   ============================================================ */
+console.log('\nH 层｜真的跑 updateNote() / deleteNote()（连接层同样是 SQLite 替身）');
+
+/** 取一行笔记的软删除状态 */
+const rowState = (noteId) =>
+  db.prepare('SELECT is_deleted AS d, deleted_at AS t FROM notes WHERE id = ?').get(noteId);
+
+async function layerH() {
+  /* ---------- 先备一条"待改、待删"的笔记（用真代码写进去）---------- */
+  const made = await T.insertNote(makeConn(db), {
+    content: 'Day 22 自检：这条会被改一次，然后被删掉 #自检',
+    clientToken: 'selfcheck-token-day22',
+    tags: ['自检', '待删']
+  });
+  check('H-01 前置：这条待改待删的笔记写进去了',
+    made.statusCode === 200, JSON.stringify(made));
+  const id = made.payload.note.id;
+  const createdAt = made.payload.note.createdAt;
+
+  /* ============================================================
+     第一部分：validatePatch（纯函数，不碰数据库）
+     ============================================================ */
+  const noId = T.validatePatch({}, { content: '改点什么' });
+  check('H-02 PATCH 缺 id → 拦下，且提示是中文（"要改哪一条"必须说清楚）',
+    !!noId.error && hasChinese(noId.error), JSON.stringify(noId));
+
+  const nothing = T.validatePatch({ id: id }, {});
+  check('H-03 content 和 tags 一个都不给 → 拦下（否则就是"返回成功但什么都没做"）',
+    !!nothing.error && hasChinese(nothing.error), JSON.stringify(nothing));
+
+  const onlyContent = T.validatePatch({ id: id }, { content: '只改正文' });
+  eq('H-04 只给 content → value 里 content 有值、tags 是 undefined（未给的字段不动）',
+    [onlyContent.value && onlyContent.value.content, onlyContent.value && onlyContent.value.tags],
+    ['只改正文', undefined]);
+
+  const onlyTags = T.validatePatch({ id: id }, { tags: ['甲'] });
+  eq('H-05 只给 tags → content 是 undefined',
+    [onlyTags.value && onlyTags.value.content, onlyTags.value && onlyTags.value.tags],
+    [undefined, ['甲']]);
+
+  const fromQuery = T.validatePatch({ id: id }, { content: '从查询参数拿 id' });
+  eq('H-06 id 可以来自查询参数 ?id=（前端用 PATCH /api/notes?id=xxx）',
+    fromQuery.value && fromQuery.value.id, id);
+
+  const fromBody = T.validatePatch({}, { id: id, content: '从请求体拿 id' });
+  eq('H-07 id 也可以来自请求体（两条路都通，免得某个客户端发不出去）',
+    fromBody.value && fromBody.value.id, id);
+
+  check('H-08 PATCH 不要求 clientToken（幂等键是防重复**新建**的，改已有的笔记不需要）',
+    !T.validatePatch({ id: id }, { content: '没给 token 也该过' }).error);
+
+  /* ---------- 标签的兜底规则与 POST 完全共用一处 ---------- */
+  const messy = T.validatePatch({ id: id }, {
+    tags: ['  甲  ', '甲', '', '乙', '丙', '丁', '戊', '己']
+  });
+  eq('H-09 ★ 标签走的是与 POST 同一套兜底：去空白、去重、截断到 5 个',
+    messy.value && messy.value.tags, ['甲', '乙', '丙', '丁', '戊']);
+
+  const badTags = T.validatePatch({ id: id }, { tags: '不是数组' });
+  check('H-10 tags 不是数组 → 拦下且提示是中文',
+    !!badTags.error && hasChinese(badTags.error), JSON.stringify(badTags));
+
+  const emptyContent = T.validatePatch({ id: id }, { content: '   ' });
+  check('H-11 content 只有空白 → 拦下（不能把正文改成空的）',
+    !!emptyContent.error && hasChinese(emptyContent.error), JSON.stringify(emptyContent));
+
+  /* ============================================================
+     第二部分：updateNote —— 真的改
+     ============================================================ */
+  const ghost = await T.updateNote(makeConn(db), { id: 'n_根本不存在', content: '改它' });
+  check('H-12 ★ 改一条不存在的 → 404（不是静默成功）',
+    ghost.statusCode === 404, JSON.stringify(ghost));
+  eq('H-13 404 的 message 就是契约里那句中文（前端会原样显示）',
+    ghost.payload, { ok: false, message: T.NOT_FOUND_MESSAGE });
+
+  const patched = await T.updateNote(makeConn(db), { id: id, content: 'Day 22：正文被改过了' });
+  check('H-14 改正文 → 200 且 ok=true',
+    patched.statusCode === 200 && patched.payload.ok === true, JSON.stringify(patched));
+  eq('H-15 ★ 正文真的变了', patched.payload.note.content, 'Day 22：正文被改过了');
+  eq('H-16 ★ 只给了 content，标签**原样保留**（PATCH 不是整体替换）',
+    patched.payload.note.tags, ['自检', '待删']);
+  eq('H-17 ★ createdAt **没有**被改动（创建时间不该因为编辑而变）',
+    patched.payload.note.createdAt, createdAt);
+  eq('H-18 返回的仍是契约里那四个字段',
+    Object.keys(patched.payload.note).sort(), ['content', 'createdAt', 'id', 'tags']);
+
+  const patched2 = await T.updateNote(makeConn(db), { id: id, tags: ['新标签A', '新标签B'] });
+  eq('H-19 ★ 改标签 → 整批替换：旧的「自检/待删」都没了',
+    patched2.payload.note.tags, ['新标签A', '新标签B']);
+  eq('H-20 整批替换后库里的标签行数就是新的两个（不是追加成 4 个）',
+    countTagsOf(id), 2);
+  eq('H-21 没给 content，正文保持上一次改过的值',
+    patched2.payload.note.content, 'Day 22：正文被改过了');
+
+  /* ============================================================
+     第三部分：deleteNote —— 删，但只是打标记
+     ============================================================ */
+  const ghostDel = await T.deleteNote(makeConn(db), 'n_根本不存在');
+  check('H-22 ★ 删一条不存在的 → 404（**绝不**静默成功 —— 删除的假成功最可怕）',
+    ghostDel.statusCode === 404, JSON.stringify(ghostDel));
+
+  const before = db.prepare('SELECT COUNT(*) AS c FROM notes').get().c;
+  const del = await T.deleteNote(makeConn(db), id);
+  check('H-23 删 → 200 且 ok=true',
+    del.statusCode === 200 && del.payload.ok === true, JSON.stringify(del));
+  eq('H-24 返回里带被删的 id（对得上删的是哪一条）', del.payload.deleted.id, id);
+  check('H-25 返回里带删除时刻 at，是 ISO 串',
+    typeof del.payload.deleted.at === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(del.payload.deleted.at),
+    String(del.payload.deleted.at));
+
+  eq('H-26 ★★★ 行**还在库里** —— 软删除的证据（真删的话这一条会是 0）',
+    db.prepare('SELECT COUNT(*) AS c FROM notes WHERE id = ?').get(id).c, 1);
+  eq('H-27 ★ 总行数也一点没少（DELETE 只改标记，不删行）',
+    db.prepare('SELECT COUNT(*) AS c FROM notes').get().c, before);
+  eq('H-28 ★ is_deleted 被打成了 1', rowState(id).d, 1);
+  eq('H-29 ★ deleted_at 与返回的 at 是同一时刻（两个方向都对得上）',
+    rowState(id).t, T.toDbDateTime(del.payload.deleted.at));
+
+  eq('H-30 ★ 标签行**没被删**（恢复的时候整条笔记才是完整的）', countTagsOf(id), 2);
+
+  check('H-31 ★ 删完之后，用 GET 的同一套 SQL 查不到了（"查询时跳过"那一半生效）',
+    !queryNotes(null, null, 200).some((r) => r.id === id),
+    JSON.stringify(queryNotes(null, null, 200).map((r) => r.id)));
+
+  const again = await T.deleteNote(makeConn(db), id);
+  check('H-32 ★ 再删一次 → 404（已经删过的不能再删，也不假装成功）',
+    again.statusCode === 404, JSON.stringify(again));
+
+  const patchDeleted = await T.updateNote(makeConn(db), { id: id, content: '改一条已删的' });
+  check('H-33 ★ 已删除的笔记也改不动（404，不会把删掉的东西改活）',
+    patchDeleted.statusCode === 404, JSON.stringify(patchDeleted));
+
+  /* ---------- ★★★ 今天最想证明的一件事：删错了能找回来 ---------- */
+  db.prepare('UPDATE notes SET is_deleted = 0, deleted_at = NULL WHERE id = ?').run(id);
+  check('H-34 ★★★ 一句 UPDATE 就把删掉的笔记找回来了（这就是软删除的全部意义）',
+    queryNotes(null, null, 200).some((r) => r.id === id),
+    JSON.stringify(queryNotes(null, null, 200).map((r) => r.id)));
+  eq('H-35 恢复后标签是完整的两个（所以当初不该删标签行）',
+    tagsOf(queryNotes(null, null, 200), id), ['新标签A', '新标签B']);
+
+  const afterRecover = await T.updateNote(makeConn(db), { id: id, content: '恢复之后还能继续改' });
+  check('H-36 恢复之后这条笔记能正常继续编辑',
+    afterRecover.statusCode === 200 && afterRecover.payload.note.content === '恢复之后还能继续改',
+    JSON.stringify(afterRecover));
+
+  /* ============================================================
+     第四部分：main() 入口 —— 碰数据库之前就返回的几支
+     ============================================================ */
+  const patchNoBody = await api.main({ httpMethod: 'PATCH' });
+  check('H-37 PATCH 不带请求体 → 400（要改什么都不知道）',
+    patchNoBody.statusCode === 400 && hasChinese(JSON.parse(patchNoBody.body).message),
+    JSON.stringify(patchNoBody));
+
+  const patchNoId = await api.main({
+    httpMethod: 'PATCH',
+    body: JSON.stringify({ content: '改点什么' })
+  });
+  check('H-38 PATCH 缺 id → 400，提示是中文',
+    patchNoId.statusCode === 400 && hasChinese(JSON.parse(patchNoId.body).message),
+    JSON.stringify(patchNoId));
+
+  const delNoId = await api.main({ httpMethod: 'DELETE' });
+  check('H-39 DELETE 不带 id → 400（不指名就不删，绝不批量删）',
+    delNoId.statusCode === 400, JSON.stringify(delNoId));
+  eq('H-40 缺 id 的提示就是那句中文（前端原样显示）',
+    JSON.parse(delNoId.body).message, T.MISSING_ID_MESSAGE);
+
+  check('H-41 DELETE 不带请求体也能走 —— id 从查询参数取（很多客户端发 DELETE 不带 body）',
+    await api.main({ httpMethod: 'DELETE', queryStringParameters: { id: id } })
+      .then((r) => r.statusCode !== 400),
+    '被 400 拦下了，说明 DELETE 强制要求 body');
+
+  check('H-42 方法名小写 patch 也认（网关给什么大小写都不该误判成 405）',
+    (await api.main({ httpMethod: 'patch', body: JSON.stringify({}) })).statusCode === 400);
+
+  /* ---------- ★ 跨域允许的方法名单必须跟上四个方法 ---------- */
+  // 少写 PATCH / DELETE 的话，浏览器的预检会先失败，
+  // 而报错长得像"接口挂了"—— 排查时会从完全错误的地方开始。
+  // 这条断言就是为了把"改了路由却忘了改响应头"堵在出门前。
+  const allowMethods = String(
+    (await api.main({ httpMethod: 'OPTIONS' })).headers['Access-Control-Allow-Methods']);
+  check('H-43 ★ 跨域 Allow-Methods 里 PATCH / DELETE 都在（否则前端会在预检被拦）',
+    allowMethods.includes('PATCH') && allowMethods.includes('DELETE'), allowMethods);
 }
 
 
@@ -827,11 +1054,35 @@ function layerF() {
   check('F-06 上层文件里没有事务调用（beginTransaction / commit / rollback）',
     txFiles.length === 0, txFiles.join(','));
 
-  // -------- F-07：剥掉注释后，上层文件里查不到 SQL 语句 --------
-  const sqlFiles = LAYER_FILES.filter((f) =>
-    /\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(layerSrc[f]));
-  check('F-07 上层文件里查不到 SQL 关键字（剥掉注释再查，避免误伤解释性文字）',
-    sqlFiles.length === 0, sqlFiles.join(','));
+  /* -------- F-07：剥掉注释后，上层文件里查不到 SQL **语句** --------
+     ★ Day 22 修正（这条断言自己出过一次假红，值得记下来）：
+       原来只查单个关键字 `SELECT|INSERT|UPDATE|DELETE`，
+       结果 index.js 的 HTTP 方法表 `['GET','POST','PATCH','DELETE']`
+       里那个 'DELETE' 被当成 SQL —— 它是方法名，不是语句。
+       假红的坏处不是报错，是**让人开始不信这个脚本**：
+       下次真有 SQL 漏上去，很可能被当成"又是误报"直接忽略。
+
+       所以改成"关键字 + 搭档"才算一句话：
+         SELECT..FROM / INSERT INTO / UPDATE..SET / DELETE FROM / REPLACE INTO
+       方法名、提示语里的方法名都凑不出这种组合（"DELETE" 后面没有 FROM），
+       而项目里的真实 SQL 一定带搭档。
+       距离限制 200 字符，免得隔着半个文件把两个词硬凑成一句。 */
+  const SQL_SNIPPETS = [
+    ['SELECT ... FROM', /\bSELECT\b[\s\S]{0,200}?\bFROM\b/i],
+    ['INSERT INTO', /\bINSERT\s+INTO\b/i],
+    ['UPDATE ... SET', /\bUPDATE\b[\s\S]{0,200}?\bSET\b/i],
+    ['DELETE FROM', /\bDELETE\s+FROM\b/i],
+    ['REPLACE INTO', /\bREPLACE\s+INTO\b/i]
+  ];
+
+  const sqlHits = [];
+  for (const f of LAYER_FILES) {
+    for (const [name, re] of SQL_SNIPPETS) {
+      if (re.test(layerSrc[f])) sqlHits.push(f + ' 里像是有 ' + name);
+    }
+  }
+  check('F-07 上层文件里查不到 SQL 语句（SELECT..FROM / INSERT INTO / UPDATE..SET / DELETE FROM）',
+    sqlHits.length === 0, sqlHits.join('；'));
 
   // -------- F-08：反着再守一条，防上面几条变成"空转"--------
   // 上面 7 条都是"某处**不该有**什么"。万一将来把所有 SQL 挪走、
@@ -853,6 +1104,19 @@ function layerF() {
   check('F-10 read.js / write.js 都 require 了 repository（证明它们真的经过这一层）',
     /require\(\s*'\.\/repository'\s*\)/.test(layerSrc['read.js']) &&
     /require\(\s*'\.\/repository'\s*\)/.test(layerSrc['write.js']));
+
+  /* -------- F-11：给 F-07 自己上一道保险 --------
+     F-07 是"不该有什么"的断言，天生容易空转：
+     把它的正则改窄一点（比如只留 REPLACE INTO），上层就算写满 SQL 也照样全绿。
+     所以反过来断言：同一套规则用在 repository.js 上，该命中的必须都命中。
+     （REPLACE INTO 是顺手加的防御项，项目里没用到，不强求命中。） */
+  const MUST_HIT = ['SELECT ... FROM', 'INSERT INTO', 'UPDATE ... SET', 'DELETE FROM'];
+  const notHit = SQL_SNIPPETS
+    .filter(([name]) => MUST_HIT.indexOf(name) !== -1)
+    .filter(([, re]) => !re.test(repoCode))
+    .map(([name]) => name);
+  check('F-11 ★ F-07 那套规则在 repository.js 上确实命中（否则 F-07 可能是空转的假绿）',
+    notHit.length === 0, notHit.length ? '没命中：' + notHit.join(',') : '');
 }
 
 
@@ -914,7 +1178,13 @@ function finish() {
   console.log('  8. 真 MySQL 上事务回滚的行为（InnoDB 与 SQLite 的实现不同）');
   console.log('  9. 真 MySQL 上唯一索引对 NULL 的放行（理论上允许任意多 NULL）');
   console.log(' 10. OPTIONS 预检能不能穿过 CloudBase 的 HTTP 网关到达函数');
-  console.log('\n以上 4～10 靠部署后的核对步骤验，见 DEPLOY.md 文末附录第 6 步。');
+  console.log(' 11. 真 MySQL 上加 `is_deleted` 两列的 ALTER TABLE 顺不顺利（Day 22 新加的列，');
+  console.log('     本机 SQLite 夹具是建表时就带上的，验不到"给已有数据的表加列"这一步）');
+  console.log(' 12. 真 MySQL 上 UPDATE 的 affectedRows 语义（SQLite 与 MySQL 的"变化行数"定义');
+  console.log('     不完全一样；markNoteDeleted 靠它判断，已在代码里用"先查再删"绕开了）');
+  console.log(' 13. H 层的"恢复"是自检脚本自己写的一句 UPDATE，不是产品功能 ——');
+  console.log('     真正的后悔药是 db/README.md 里那条人工 SQL，界面上的撤销还没做（C2）');
+  console.log('\n以上 4～13 靠部署后的核对步骤验，见 DEPLOY.md 文末附录第 6 步。');
 
   if (failures.length) {
     console.log('\n失败项：');
@@ -925,6 +1195,7 @@ function finish() {
 
 layerE()
   .then(layerC)
+  .then(layerH)
   .then(layerF)
   .then(layerG)
   .then(finish)

@@ -140,16 +140,31 @@ function validateNote(body) {
   }
 
   // ---------- tags（可选，但要兜底）----------
-  // 前端已经用 parseTags() 处理过一遍，服务端再做一遍不是重复劳动：
-  // PRD 里写的是"前端拦不住的后端还要拦"—— 接口是公开的，不只有我们的前端会调它。
-  let rawTags = b.tags;
-  if (rawTags === undefined || rawTags === null) rawTags = [];
-  if (!Array.isArray(rawTags)) {
+  const normalized = normalizeTags(b.tags);
+  if (normalized.error) return { error: normalized.error };
+
+  return { value: { content, clientToken, tags: normalized.tags } };
+}
+
+
+/* ------------------------------------------------------------
+   标签的兜底规则（Day 22 从 validateNote 里抽出来，因为 PATCH 也要用同一套）
+   ------------------------------------------------------------
+   前端已经用 parseTags() 处理过一遍，服务端再做一遍不是重复劳动：
+   PRD 里写的是"前端拦不住的后端还要拦"—— 接口是公开的，不只有我们的前端会调它。
+
+   ★ 抽成一处是为了让 POST 和 PATCH 对"什么算合法标签"的判断**完全一致**。
+     各写一份的话，早晚会出现"新建时 6 个标签被截成 5 个、编辑时却报 400"这种怪事。
+   ------------------------------------------------------------ */
+function normalizeTags(rawTags) {
+  let raw = rawTags;
+  if (raw === undefined || raw === null) raw = [];
+  if (!Array.isArray(raw)) {
     return { error: 'tags 必须是字符串数组（比如 ["工作","想法"]）' };
   }
 
   const tags = [];
-  for (const item of rawTags) {
+  for (const item of raw) {
     if (typeof item !== 'string') {
       return { error: 'tags 里的每一项都必须是字符串' };
     }
@@ -163,8 +178,7 @@ function validateNote(body) {
   if (tags.length > MAX_TAGS) {
     tags.length = MAX_TAGS;                        // 超了只取前 5 个（与前端 MAX_TAGS 一致）
   }
-
-  return { value: { content, clientToken, tags } };
+  return { tags };
 }
 
 
@@ -248,12 +262,153 @@ async function insertNote(conn, value) {
   });
 }
 
+/* ============================================================
+   以下两个是 Day 22 新增：PATCH（改）与 DELETE（删）
+   ============================================================
+   ★ 为什么它们比 POST 更该小心（今天要掌握的那件事）：
+     POST 错了是"多一条"，删掉就行；DELETE 错了是"少一条"，而少掉的找不回来。
+     所以删除这里加了三层确认，从下往上：
+       ① 数据层：软删除 —— 只打标记不真删，删错能用一句 SQL 改回来（真正的后悔药）
+       ② 接口层：必须显式给 id，缺了 400、查不到 404，**绝不静默成功**；不做批量删除
+       ③ UI 层：未实现（撤销窗口属 CANDIDATES.md 的 C2，未批准就不开工）
+   ============================================================ */
+
+// 这两句都会被前端"出错状态"原样显示，所以写成人话
+const NOT_FOUND_MESSAGE = '这条笔记不存在（可能已经被删掉了）';
+const MISSING_ID_MESSAGE = '缺少 id（要删哪一条笔记？用 ?id= 指名）';
+
+/** PATCH 要的是"改哪条"，id 可以来自查询参数，也可以来自请求体 */
+function pickId(queryParams, body) {
+  const fromQuery = queryParams && queryParams.id;
+  if (typeof fromQuery === 'string' && fromQuery.trim() !== '') return fromQuery.trim();
+
+  const fromBody = body && body.id;
+  if (typeof fromBody === 'string' && fromBody.trim() !== '') return fromBody.trim();
+
+  return null;
+}
+
+
+/* ------------------------------------------------------------
+   PATCH 的校验：与 POST 的两处不同
+   ------------------------------------------------------------
+   1) 没有 clientToken —— 幂等键是防"重复新建"的，改一条已有的笔记
+      本来就是可重复的操作（内容一样改两次，结果一样），不需要它
+   2) content 和 tags **都可以不给**，但不能两个都不给：
+      什么都不改却回 200，就是"看起来成功但什么都没做"
+   ------------------------------------------------------------ */
+function validatePatch(queryParams, body) {
+  const b = body || {};
+
+  const id = pickId(queryParams, b);
+  if (id === null) {
+    return { error: '缺少 id（要改哪一条笔记？用 ?id= 指名）' };
+  }
+
+  const hasContent = b.content !== undefined && b.content !== null;
+  const hasTags = b.tags !== undefined && b.tags !== null;
+  if (!hasContent && !hasTags) {
+    return { error: 'content 和 tags 至少要给一个（不然这次改动什么都不会变）' };
+  }
+
+  const value = { id, content: undefined, tags: undefined };
+
+  if (hasContent) {
+    if (typeof b.content !== 'string') {
+      return { error: 'content 必须是字符串（现在收到的是 ' + typeof b.content + '）' };
+    }
+    const content = b.content.trim();
+    if (content === '') {
+      return { error: 'content 不能为空（只有空白的正文也不行）' };
+    }
+    if (content.length > MAX_LENGTH) {
+      return { error: 'content 最多 ' + MAX_LENGTH + ' 字，当前 ' + content.length + ' 字' };
+    }
+    value.content = content;
+  }
+
+  if (hasTags) {
+    const normalized = normalizeTags(b.tags);
+    if (normalized.error) return { error: normalized.error };
+    value.tags = normalized.tags;
+  }
+
+  return { value };
+}
+
+
+/* ------------------------------------------------------------
+   改一条：先认出"这条在不在"，再改
+   ------------------------------------------------------------
+   ★ 先 SELECT 再 UPDATE 的顺序在这里是**有意的**，和 POST 那里相反：
+     - POST 用唯一索引兜底，因为"先查再插"有竞态（会插重）
+     - PATCH 这里的后果轻得多：竞态只可能导致"改了一条刚被删掉的"
+       （而软删除让这条还在库里，可恢复）。换来的是**能给出准确的 404**，
+       以及"没改到的字段保持原样"这件事变得简单可靠。
+     - 另外一个实际原因：UPDATE 的 affectedRows 在 MySQL 里是"**发生变化的行数**"，
+       把 content 改成和原来一样会返回 0 —— 拿它判存在性会误报 404。
+   ------------------------------------------------------------ */
+async function updateNote(conn, value) {
+  const existing = await repo.findNoteById(conn, value.id);
+  if (!existing) return fail(404, NOT_FOUND_MESSAGE);
+
+  // 只覆盖"这次给了的"字段，没给的保持原样 —— 这才是 PATCH
+  const content = value.content === undefined ? existing.content : value.content;
+  const tags = value.tags === undefined ? existing.tags : value.tags;
+
+  await repo.applyNoteUpdate(conn, { id: value.id, content: content, tags: tags });
+
+  console.log('[notelab/notes] 改了一条', {
+    id: value.id,
+    changedContent: value.content !== undefined,
+    changedTags: value.tags !== undefined,
+    tags: tags.length
+  });
+
+  // createdAt 用原来的：**创建时间不该因为编辑而改变**
+  return ok({
+    note: {
+      id: existing.id,
+      content: content,
+      tags: tags,
+      createdAt: existing.createdAt
+    }
+  });
+}
+
+
+/* ------------------------------------------------------------
+   删一条：软删除
+   ------------------------------------------------------------
+   返回里带 `at`（删除时刻），是为了让日志和界面都能回答"什么时候删的"。
+   ★ 行还在库里 —— 这是故意的，也是"删错了还能找回"的全部依靠。
+   ------------------------------------------------------------ */
+async function deleteNote(conn, id) {
+  const existing = await repo.findNoteById(conn, id);
+  if (!existing) return fail(404, NOT_FOUND_MESSAGE);
+
+  const at = new Date().toISOString();
+  await repo.markNoteDeleted(conn, { id: id, at: at });
+
+  console.log('[notelab/notes] 删了一条（软删除，行还在库里）', { id: id });
+
+  return ok({ deleted: { id: id, at: at } });
+}
+
+
 module.exports = {
   parseBody,
   validateNote,
   insertNote,
   newId,
   isDuplicateToken,
+  validatePatch,
+  updateNote,
+  deleteNote,
+  pickId,
+  normalizeTags,
+  NOT_FOUND_MESSAGE,
+  MISSING_ID_MESSAGE,
   MAX_LENGTH,
   MAX_TAGS,
   MAX_TAG_LENGTH,

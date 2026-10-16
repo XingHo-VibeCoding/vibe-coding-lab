@@ -11,6 +11,11 @@
 -- 该看到：notes_rows = 6
 SELECT COUNT(*) AS notes_rows FROM notes;
 
+-- ★ Day 22 起上面的数字**不再等于"用户能看到的条数"**：
+--   删除是软删除，行还在、COUNT(*) 不会减少。想知道"页面上有几条"用这一句：
+--   该看到：visible_rows = 6（删过之后会变少，而上面那句不变 —— 差别就是软删除的痕迹）
+SELECT COUNT(*) AS visible_rows FROM notes WHERE is_deleted = 0;
+
 -- 该看到：note_tags_rows = 6
 SELECT COUNT(*) AS note_tags_rows FROM note_tags;
 
@@ -23,6 +28,7 @@ SELECT
   GROUP_CONCAT(t.tag ORDER BY t.position SEPARATOR ' #') AS tags
 FROM notes AS n
 LEFT JOIN note_tags AS t ON t.note_id = n.id
+WHERE n.is_deleted = 0          -- ★ Day 22：不加这句就会把"已删除的"也列出来
 GROUP BY n.id, n.content, n.created_at
 ORDER BY n.created_at DESC;
 
@@ -73,4 +79,41 @@ LIMIT 5;
 
 -- seed 那 6 行应该都是 NULL（它们不是通过接口写进来的，所以没有幂等键）
 SELECT COUNT(*) AS null_token_rows FROM notes WHERE client_token IS NULL;
+
+
+-- ============================================================
+-- ⑧ 软删除那一列在位（Day 22 新增）
+-- ============================================================
+-- 该看到：两行，is_deleted / deleted_at，IS_NULLABLE 分别是 NO 和 YES
+-- 如果一句都查不到，说明 schema.sql 的 ALTER 没跑，DELETE 会直接报错
+SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_TYPE, COLUMN_DEFAULT
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notes'
+  AND COLUMN_NAME IN ('is_deleted', 'deleted_at');
+
+-- DELETE 一次之后跑这句：该看到刚"删"的那条 is_deleted = 1、deleted_at 有值，
+-- 而这一行**依然在表里** —— 这就是"删错了还能找回"的依靠
+SELECT id, LEFT(content, 30) AS content_head, is_deleted, deleted_at
+FROM notes
+WHERE is_deleted = 1
+ORDER BY deleted_at DESC
+LIMIT 10;
+
+
+-- ============================================================
+-- ⑨ ★ 删错了怎么找回来（Day 22：后悔药）
+-- ============================================================
+-- 第 1 步：先找出被删的是哪条（按删除时间倒序，最近删的在前）
+SELECT id, LEFT(content, 40) AS content_head, deleted_at
+FROM notes
+WHERE is_deleted = 1
+ORDER BY deleted_at DESC
+LIMIT 20;
+
+-- 第 2 步：确认是这条之后，把它改回来（把 'n_xxx' 换成第 1 步查到的 id）
+-- UPDATE notes SET is_deleted = 0, deleted_at = NULL WHERE id = 'n_xxx';
+
+-- 第 3 步：验一次 —— 该看到这条重新出现在列表里（标签也在，因为删的时候没动标签行）
+-- SELECT id, LEFT(content, 40) AS content_head, created_at
+-- FROM notes WHERE id = 'n_xxx' AND is_deleted = 0;
 

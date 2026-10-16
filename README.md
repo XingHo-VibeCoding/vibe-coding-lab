@@ -146,17 +146,17 @@ vibe-coding-lab/
 ├── TEST_RECORD.md    Day 14 新建                     测试记录表（被测人填一次，结论进这里）
 ├── WEEK3_ACCEPTANCE.md  Day 21 新建                 第 3 周验收表（逐项证据 + 缺项如实标 FAIL + 同伴交叉验证表单）
 ├── DEMO_SCRIPT.md    Day 21 新建                     3 分钟演示提纲（用户问题 → 核心流程 → 提示词改写 → 验证方式）
-├── api-contract.md   Day 15 新建 / Day 17-18 续       接口契约（字段名照抄 mock-data.js；Day 17 补 limit，Day 18 补 POST 与 409）
-├── DEPLOY.md         Day 15 新建 / Day 17-18 续       部署指南（注册 / health / 前端托管 / 附录：建库 + 部署读接口 + 写接口）
+├── api-contract.md   Day 15 新建 / Day 17-18 续 / Day 22 续   接口契约（字段名照抄 mock-data.js；Day 17 补 limit，Day 18 补 POST 与 409，Day 22 补 PATCH 与 DELETE）
+├── DEPLOY.md         Day 15 新建 / Day 17-18 续 / Day 22 续   部署指南（注册 / health / 前端托管 / 附录：建库 + 部署读接口 + 写接口 + 改删接口）
 ├── cloudbase-functions/
 │     ├── health/     Day 15 新建                      健康检查云函数（version 暗号埋在返回值里）
-│     └── notes/      Day 17 新建 / Day 19 拆 6 文件     读写接口（同一函数同时吃 GET 和 POST /api/notes）
+│     └── notes/      Day 17 新建 / Day 19 拆 6 文件     读写接口（同一函数同时吃 GET / POST / PATCH / DELETE 四个方法）
 │           ├── index.js       入口与路由（OPTIONS 先行、校验在前、连库在后）
 │           ├── http.js        Day 18 新建            响应形状的唯一出处（ok / fail / preflight + CORS 头）
 │           ├── db.js          Day 18 新建            连接池（懒加载 mysql2）+ UTC 时间互转
-│           ├── repository.js  Day 19 新建            数据访问层：**唯一**出现 SQL 与 conn.query 的文件
+│           ├── repository.js  Day 19 新建 / Day 22 扩  数据访问层：**唯一**出现 SQL 与 conn.query 的文件
 │           ├── read.js        Day 18 新建 / 19 瘦身   GET：解析参数 → 交给仓库（177 行 → 69 行）
-│           └── write.js       Day 18 新建 / 19 瘦身   POST：校验 + 409 语义 → 交给仓库
+│           └── write.js       Day 18 新建 / 19 瘦身 / Day 22 扩   POST 校验 + 409；PATCH 改一条；DELETE 软删除
 ├── db/               Day 16 新建                     数据模型（MySQL）
 │     ├── README.md      设计说明：两张表存什么、靠哪个字段关联、字段类型为什么这么选
 │     ├── schema.sql     建表语句（幂等，重复执行不报错）
@@ -172,9 +172,9 @@ vibe-coding-lab/
 ├── skills/notelab-api-wiring/    Day 20 新建                    自检 Skill（前端接线）
 │     ├── SKILL.md           操作手册（三种"取不到数据"的分辨法、验不到的部分）
 │     └── check.cjs          配置 / 拆信封 / 形状校验 / 出错提示 / 真发请求，24 项断言，零依赖（Node 22+ 自带 fetch）
-├── skills/notelab-api-check/     Day 17 新建 / Day 19 扩到 7 层   自检 Skill（云函数）
+├── skills/notelab-api-check/     Day 17 新建 / Day 19 扩到 7 层 / Day 22 扩到 8 层   自检 Skill（云函数）
 │     ├── SKILL.md           操作手册（分层的原因、没验到的条目、重复踩过的坑）
-│     └── check.cjs          A 纯函数 / B SQL 语义 / C 入口分支 / D 写入校验 / E 真跑写入 / F 分层守卫 / G health 冒烟，163 项断言，零依赖（Node 22+ 内置 sqlite）
+│     └── check.cjs          A 纯函数 / B SQL 语义 / C 入口分支 / D 写入校验 / E 真跑写入 / F 分层守卫 / G health 冒烟 / H 真跑改与删，207 项断言，零依赖（Node 22+ 内置 sqlite）
 └── .gitignore        Day 2                           忽略规则（.env 不上传）
 ```
 
@@ -188,6 +188,8 @@ vibe-coding-lab/
 > `/api/notes` 只能绑一个函数，GET 和 POST 只能住在一起。
 > Day 19 给这个函数**分了层**：查数据库的代码全部收进 `repository.js`，
 > 上层只管"要什么、合不合法、失败算什么错"（分层图见 `TECH_DESIGN.md` 第 7.2 节）。
+> Day 22 补上了 **PATCH（改）与 DELETE（删）**，四类操作闭环。删除是**软删除**：
+> 只把 `is_deleted` 打成 1，行留在库里，一句 SQL 就能找回来（见 `db/README.md`）。
 > 但**前端还没切过去** —— 页面仍然只读 localStorage。
 > 切换的前提是先有一个真的 CloudBase 环境（见 `DEPLOY.md`）。
 > 切换时前端只该改取数那一处，因为接口返回的形状就是照着 `mock-data.js` 定的。
@@ -254,9 +256,19 @@ vibe-coding-lab/
 20. **接真接口的开关默认关着**（Day 20 起）：`api.js` 里没配地址时 `isEnabled()` 返回 false，
    页面照旧读 localStorage。这样"接线"这件事不会因为代码合进来就改动线上行为 ——
    接线自检 A-01 守的就是这条底线
+21. **删除必须"指名道姓"，绝不静默成功**（Day 22 起）：DELETE 要求显式给 `id`，
+   缺了回 400、查不到回 **404**，**不做批量删除**。
+   理由：删除是四类操作里唯一"错了就找不回来"的那个 —— 新增错了是多一条，删掉就好；
+   删除错了是少一条，而少掉的内容没有任何地方能再变出来。
+   "看起来成功但什么都没删"是最坏的结果：用户以为删了，其实没删，也不知道要去确认
+22. **软删除的"跳过"只有一处实现**（Day 22 起）：`repository.withNotDeleted()`。
+   别处不许自己拼 `is_deleted = 0` —— 拼漏了**不会报错**，只会让已删的笔记静默地又冒出来。
+   配套两条：DELETE 只改标记不删行；`note_tags` 标签行也留着（恢复时笔记才是完整的）。
+   找回的方法是 `db/verify.sql` 第 ⑨ 段那句人工 `UPDATE`，**故意没做成自动清理**
 
-> 已知欠账：`app.js`（751 行）和云函数自检 `check.cjs`（934 行）都超过了约束 5 的 500 行。
+> 已知欠账：`app.js`（751 行）和云函数自检 `check.cjs`（1205 行）都超过了约束 5 的 500 行。
 > 拆分方案记在 `CANDIDATES.md` 的 C7 / C8，本期先不动（拆分是重构，不和新功能混在一天）。
+> `write.js`（418 行）Day 22 扩到接近上限，再往里加东西之前先考虑拆成 `write-post.js` / `write-patch.js`。
 
 ---
 

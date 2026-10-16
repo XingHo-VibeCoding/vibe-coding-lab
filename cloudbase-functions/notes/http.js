@@ -23,7 +23,11 @@ const CORS_HEADERS = {
   // JSON 格式的 POST 属于"非简单请求"，浏览器会先发一个 OPTIONS 问一句
   // "我能发吗"。不答这几个头，前端将来的 POST 会在浏览器控制台报跨域错 ——
   // 而且报的错看起来像"接口挂了"，实际是预检没答。所以现在就答上。
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  // ★ Day 22：PATCH / DELETE 加进来之后这行必须跟着加。
+  //   不改的话，前端的 PATCH/DELETE 会被浏览器在**预检**这一步就拦掉，
+  //   而报错的样子是"接口不通"—— 很难想到是这里少写了两个方法名。
+  //   （自检 C-10 / H-43 守着这一行。）
+  'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Max-Age': '86400'
 };

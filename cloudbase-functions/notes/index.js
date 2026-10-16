@@ -17,7 +17,7 @@
      db.js          连接池 + 时间格式转换（只在这里建连接池）
      repository.js  数据访问层（Day 19 新建）：**唯一**出现 SQL 与 conn.query 的文件
      read.js        GET  的业务逻辑：解析参数 → 交给仓库
-     write.js       POST 的业务逻辑：校验 + 重复提交保护（409）→ 交给仓库
+     write.js       写操作的业务逻辑：POST 校验 + 409；PATCH 改一条；DELETE 软删除
    ---------- 为什么这么拆 ----------
    拆文件的直接原因是 README 约束 5（单个文件超过 500 行就拆开）。
    但拆的**依据**是职责，不是行数：
@@ -60,10 +60,12 @@ exports.main = async (event) => {
     return toResponse(preflight());
   }
 
-  // PUT / PATCH / DELETE 都不支持：PATCH 和 DELETE 是第 4 周的事（今日不做）。
+  // Day 22 起支持四个方法。PUT 仍然不支持（PUT 语义是"整体替换"，
+  // 我们只要"改其中几个字段"= PATCH，多一个 PUT 只会多一种误用）。
   // 明确回 405，比让它落进某个分支、返回一份"看起来成功但没做任何事"的数据强。
-  if (method !== 'GET' && method !== 'POST') {
-    return toResponse(fail(405, `本接口不支持 ${method}（只支持 GET 和 POST）`));
+  const SUPPORTED = ['GET', 'POST', 'PATCH', 'DELETE'];
+  if (SUPPORTED.indexOf(method) === -1) {
+    return toResponse(fail(405, `本接口不支持 ${method}（只支持 GET、POST、PATCH、DELETE）`));
   }
 
   /* -------- 第一步：先把请求校验干净（纯函数，不碰数据库）--------
@@ -77,12 +79,30 @@ exports.main = async (event) => {
     const query = read.parseQuery(e.queryStringParameters);
     if (query.error) return toResponse(fail(400, query.error));
     job = (conn) => read.listNotes(conn, query);
-  } else {
+
+  } else if (method === 'POST') {
     const body = write.parseBody(e);
     if (body.error) return toResponse(fail(400, body.error));
     const checked = write.validateNote(body.body);
     if (checked.error) return toResponse(fail(400, checked.error));
     job = (conn) => write.insertNote(conn, checked.value);
+
+  } else if (method === 'PATCH') {
+    // PATCH 必须有请求体（要改什么），所以没有就 400
+    const body = write.parseBody(e);
+    if (body.error) return toResponse(fail(400, body.error));
+    const checked = write.validatePatch(e.queryStringParameters, body.body);
+    if (checked.error) return toResponse(fail(400, checked.error));
+    job = (conn) => write.updateNote(conn, checked.value);
+
+  } else {
+    // DELETE：请求体可有可无（很多客户端发 DELETE 时不带 body），
+    // 所以 id 主要看查询参数，取不到再看 body。
+    const body = write.parseBody(e);
+    const rawBody = body.error ? {} : body.body;
+    const id = write.pickId(e.queryStringParameters, rawBody);
+    if (id === null) return toResponse(fail(400, write.MISSING_ID_MESSAGE));
+    job = (conn) => write.deleteNote(conn, id);
   }
 
   /* -------- 第二步：才去连库执行 -------- */
@@ -121,6 +141,7 @@ exports.__test__ = {
   // 读（参数解析在 read.js，SQL 组装在 repository.js —— Day 19 挪的）
   parseQuery: read.parseQuery,
   buildWhere: repo.buildWhere,
+  withNotDeleted: repo.withNotDeleted,
   TAG_NONE: repo.TAG_NONE,
   LIMIT_DEFAULT: read.LIMIT_DEFAULT,
   LIMIT_MAX: read.LIMIT_MAX,
@@ -136,6 +157,14 @@ exports.__test__ = {
   TOKEN_MIN: write.TOKEN_MIN,
   TOKEN_MAX: write.TOKEN_MAX,
   DUPLICATE_MESSAGE: write.DUPLICATE_MESSAGE,
+  // 改 / 删（Day 22）
+  validatePatch: write.validatePatch,
+  updateNote: write.updateNote,
+  deleteNote: write.deleteNote,
+  pickId: write.pickId,
+  normalizeTags: write.normalizeTags,
+  NOT_FOUND_MESSAGE: write.NOT_FOUND_MESSAGE,
+  MISSING_ID_MESSAGE: write.MISSING_ID_MESSAGE,
   // 时间
   toIsoUtc,
   toDbDateTime,

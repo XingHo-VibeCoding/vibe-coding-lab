@@ -133,6 +133,22 @@ async function selectTags(conn, ids) {
   return byNote;
 }
 
+/* ------------------------------------------------------------
+   ★ 软删除的唯一出口（Day 22）
+   ------------------------------------------------------------
+   "跳过已删除的"这半句只有这一处实现，别处不许自己拼 `is_deleted = 0`。
+   否则早晚会出现"某个查询忘了带这一句、已删的笔记又冒出来"——
+   而且这类 bug 不报错，只会静默地多显示几条。
+
+   为什么不真删：删除是唯一"错了就找不回来"的操作。
+   打标记之后 DELETE 变成可逆的（一句 SQL 就能改回来，见 db/README.md）。
+   ------------------------------------------------------------ */
+function withNotDeleted(whereSql) {
+  return whereSql
+    ? whereSql + ' AND n.is_deleted = 0'
+    : 'WHERE n.is_deleted = 0';
+}
+
 /**
  * 查一列笔记，直接返回上层要的形状：[{ id, content, tags, createdAt }]
  * query 已经过 read.parseQuery 校验（见 index.js 的顺序说明）。
@@ -146,7 +162,7 @@ async function findNotes(conn, query) {
   const [noteRows] = await conn.query(
     `SELECT n.id, n.content, n.created_at
        FROM notes AS n
-       ${whereSql}
+       ${withNotDeleted(whereSql)}
       ORDER BY n.created_at DESC
       LIMIT ?`,
     params.concat([query.limit])
@@ -204,15 +220,89 @@ async function insertNoteWithTags(conn, note) {
 
 
 /**
- * 注意本文件**只导出上面那些**：一个"按 id 取一条"的东西现在不需要
- * （PATCH/DELETE 是第 4 周的事），所以不提前写在这里 ——
- * 没人调用的函数放进来，只会让人以为"这接口是不是已经有功能了"。
- * 到第 4 周真要用时，读那一半已经有现成的写法可以照抄。
+ * 按 id 取一条（Day 22 新增：PATCH / DELETE 都要先认出"这条在不在"）
+ * 已删除的取不到（返回 null）—— 调用方据此回 404。
  */
+async function findNoteById(conn, id) {
+  const [rows] = await conn.query(
+    `SELECT n.id, n.content, n.created_at
+       FROM notes AS n
+      WHERE n.id = ? AND n.is_deleted = 0
+      LIMIT 1`,
+    [id]
+  );
+  if (rows.length === 0) return null;
+
+  const tagMap = await selectTags(conn, [id]);
+  return {
+    id: rows[0].id,
+    content: rows[0].content,
+    tags: tagMap.get(id) || [],
+    createdAt: toIsoUtc(rows[0].created_at)
+  };
+}
+
+
+/* ------------------------------------------------------------
+   改：正文 + 标签，一个事务
+   ------------------------------------------------------------
+   ★ 标签是**整批替换**（先删旧的后插新的），不是增量。
+     理由写在 api-contract.md 第四节之二：增量要额外定义"怎么表示删一个标签"，
+     每种写法都容易误用；而前端编辑时本来就是把整条重新提交。
+
+   ★ 注意 `AND is_deleted = 0`：已删除的不许被改。
+     （"这条在不在"由调用方先用 findNoteById 判，这里再兜一道 ——
+       两层之间理论上有竞态，但个人工具的场景下不值得为它上锁，
+       记在这里是因为**知道有，比假装没有强**。）
+   ------------------------------------------------------------ */
+async function applyNoteUpdate(conn, note) {
+  await conn.beginTransaction();
+  try {
+    await conn.query(
+      `UPDATE notes SET content = ? WHERE id = ? AND is_deleted = 0`,
+      [note.content, note.id]
+    );
+
+    await conn.query(`DELETE FROM note_tags WHERE note_id = ?`, [note.id]);
+
+    if (note.tags.length > 0) {
+      const rows = note.tags.map((tag, position) => [note.id, tag, position]);
+      await conn.query(`INSERT INTO note_tags (note_id, tag, position) VALUES ?`, [rows]);
+    }
+
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  }
+}
+
+
+/* ------------------------------------------------------------
+   删：只打标记，不真删行（Day 22）
+   ------------------------------------------------------------
+   ★ 不删 note_tags：标签行留着，恢复的时候整条笔记才是完整的。
+     也因此 notes 上那个 ON DELETE CASCADE 外键在软删除下永远不触发 ——
+     这不是遗漏，是软删除的应有之义（真删的那天才会用到它）。
+
+   返回布尔值：true = 真的改到了一行；false = 没这条 / 已经删过了。
+   ------------------------------------------------------------ */
+async function markNoteDeleted(conn, note) {
+  const [res] = await conn.query(
+    `UPDATE notes SET is_deleted = 1, deleted_at = ? WHERE id = ? AND is_deleted = 0`,
+    [toDbDateTime(note.at), note.id]
+  );
+  return !!(res && res.affectedRows === 1);
+}
+
 
 module.exports = {
   buildWhere,
+  withNotDeleted,
   findNotes,
+  findNoteById,
   insertNoteWithTags,
+  applyNoteUpdate,
+  markNoteDeleted,
   TAG_NONE
 };
