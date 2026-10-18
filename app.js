@@ -19,6 +19,12 @@ const MAX_LENGTH = 5000;                 // 单条笔记字数上限，见 PRD �
 const MAX_TAGS = 5;                      // 每条笔记最多标签数，见 PRD 验收 2.4
 const NO_TAG = '__no_tag__';             // 「无标签」分组的内部标记（验收 2.5）
 
+/* Day 23：面向用户的报错文案统一从 errors.js 取（index.html 里它排在本文件前面）。
+   ★ 这里**故意不写兜底**：取不到就让它当场炸，而不是悄悄退回一句写死的"出错了"。
+     理由：静默兜底会让"文案没统一"这件事一直不暴露 ——
+     而"看起来能用"比"立刻报错"难查得多（Day 13 那次就是这么栽的）。 */
+const ERRORS = window.NoteLabErrors;
+
 let notes = [];                 // 内存里的全部笔记（打开页面时从存储读一次）
 let storageAvailable = true;    // 浏览器是否允许本地存储（验收 5.4）
 
@@ -87,6 +93,13 @@ function setView(id, options = {}) {
    存储读写：只有这两个函数可以碰 localStorage（TECH_DESIGN 第 7 节约束 4）
    ------------------------------------------------------------ */
 
+/* Day 23：记下最近一次存储失败属于哪一类（unavailable / quota / corrupt）。
+   ★ 为什么要分：改之前不管是"浏览器不让存"还是"空间写满了"，
+     界面都只说一句"浏览器不允许本地存储" —— 后者是**错的**，
+     用户会以为浏览器坏了，而真正的解法（删几条旧笔记）他根本想不到。
+   分出来之后，提示语由 errors.js 按类给。 */
+let lastStorageReason = null;
+
 function loadNotes() {
   try {
     // 先做一次写入测试：隐私模式下 setItem 会直接抛错
@@ -97,22 +110,36 @@ function loadNotes() {
     const raw = localStorage.getItem(STORAGE_KEY);
     notes = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(notes)) notes = [];   // 数据被改坏时兜底
+    lastStorageReason = null;
   } catch (err) {
+    lastStorageReason = ERRORS.describeStorageError(err);
     storageAvailable = false;
     notes = [];
+    // ★ 原始错误（QuotaExceededError 之类）**只进 console**，不进界面 ——
+    //   用户看不懂，看不懂的报错等于没报。
     console.warn('本地存储不可用，本次记录不会被保留：', err);
   }
 }
 
 function saveNotes() {
-  if (!storageAvailable) return false;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
-    return true;
-  } catch (err) {
-    console.warn('保存失败：', err);
+  if (!storageAvailable) {
+    lastStorageReason = 'unavailable';
     return false;
   }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
+    lastStorageReason = null;
+    return true;
+  } catch (err) {
+    lastStorageReason = ERRORS.describeStorageError(err);
+    console.warn('保存失败（原始错误只进 console，界面显示人话）：', err);
+    return false;
+  }
+}
+
+/** 取一句能直接显示给用户的存储类提示 */
+function storageHint() {
+  return ERRORS.ERROR_MESSAGES.storage[lastStorageReason || 'unavailable'];
 }
 
 /* ------------------------------------------------------------
@@ -226,7 +253,8 @@ function addNote(rawText) {
   el.input.focus();
 
   if (!saved) {                                     // 验收 5.4
-    showHint('注意：浏览器不允许本地存储，这条记录关掉页面就会丢', true, 6000);
+    // Day 23：不再一律说"浏览器不允许本地存储"——空间写满时那句话是错的
+    showHint(storageHint(), true, 6000);
   } else if (!el.hint.textContent) {
     // Day 13：列表挪到「全部笔记」视图了，所以这里明确回一句"已保存"，
     // 配合下面的「最近 3 条」预览，让用户确认真的存上了。
@@ -554,7 +582,9 @@ function renderStatePanel() {
 
     const msg = document.createElement('div');
     msg.className = 'error-msg';
-    msg.textContent = pageError || '未知错误';
+    // Day 23：原来是 `pageError || '未知错误'` —— "未知错误"三个字对用户没有任何信息量，
+    // 它就是一句裸报错。现在改成"出了问题 + 下一步做什么"。
+    msg.textContent = pageError || ERRORS.ERROR_MESSAGES.server.unknown;
 
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -744,7 +774,7 @@ function bootstrap() {
   }
 
   if (!storageAvailable) {
-    showHint('当前浏览器不允许本地存储（可能是隐私模式），记录不会被保留', true, 0);
+    showHint(storageHint(), true, 0);   // Day 23：按"不可用 / 写满 / 数据坏"给不同的话
   }
 }
 

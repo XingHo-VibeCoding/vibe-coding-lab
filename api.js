@@ -48,6 +48,21 @@ function resolveBase() {
 
 const API_BASE = resolveBase();
 
+/* ★ Day 23：所有面向用户的报错文案改从 errors.js 取，本文件不再自己写句子。
+   浏览器里它是先加载的 window.NoteLabErrors，Node 自检里是 require（两处都走得通）。
+
+   ⚠️ 变量名为什么叫 ERROR_TEXT 而不是更顺手的 ERRORS：
+      **经典脚本（非 module）的顶层 const / let 共享同一个全局词法作用域**，
+      api.js 和 app.js 都写 `const ERRORS = …` 会直接 SyntaxError
+      "Identifier 'ERRORS' has already been declared"，整个 app.js 一行都不执行。
+      第一版就是这么写的 —— DOM 桩测试（vm 沙箱）全绿、真实浏览器整个白屏，
+      因为 vm 里每个脚本的作用域是分开的，撞不出这个错。
+      这是 Day 13 那条教训的新版本：**桩测过了不等于用户看得见。**
+      （自查脚本 L-4 现在会扫这个重名。） */
+const ERROR_TEXT = (typeof require === 'function')
+  ? require('./errors.js')
+  : window.NoteLabErrors;
+
 /** 有没有配地址 —— 没配就不启用，行为与改动前完全一致 */
 function isEnabled() {
   return typeof API_BASE === 'string' && API_BASE.length > 0;
@@ -79,10 +94,11 @@ function isEnabled() {
    所以下面 catch 里的提示语**不写"出错了"**，而是写清楚"去看哪里"。
    ------------------------------------------------------------ */
 
+/* ★ Day 23：文案本身搬到 errors.js 去了，这里只留一个取值口。
+   为什么连函数名都留着：断言脚本和排查文档都指名它，改名要动的地方太多；
+   而"文案住在哪"这件事只要一处（errors.js），统一的目的已经达到了。 */
 function corsHint() {
-  return '取不到数据。请按 F12 看一眼：'
-    + '① Network 里那条 /api/notes 是什么状态（404/502 → 地址不对；200 但没内容 → 跨域没过）；'
-    + '② Console 里有没有带 CORS 的红字（有 → 是服务端响应头的问题，前端改不了）。';
+  return ERROR_TEXT.ERROR_MESSAGES.network.unreachable;
 }
 
 
@@ -114,17 +130,22 @@ function unwrapGatewayPayload(json) {
 
 /** 校验形状：契约说成功必须是 { ok: true, notes: [...] } */
 function normalizeNotesResponse(payload) {
+  // ★ Day 23：四句文案全部取自 errors.js —— 改文案只改那一处
+  const N = ERROR_TEXT.ERROR_MESSAGES.network;
+
   if (!payload || typeof payload !== 'object') {
-    return { ok: false, message: '接口返回的数据看不懂（不是一个 JSON 对象）' };
+    return { ok: false, message: N.notObject };
   }
   if (payload.ok === false) {
-    return { ok: false, message: payload.message || '接口说这次取数失败了（没给原因）' };
+    // 服务端给了中文原因就用它的（它比我们的兜底准），没给才用兜底
+    const reason = typeof payload.message === 'string' ? payload.message.trim() : '';
+    return { ok: false, message: reason || N.failedNoReason };
   }
   if (payload.ok !== true) {
-    return { ok: false, message: '接口返回里没有 ok 字段，形状与 api-contract.md 不一致' };
+    return { ok: false, message: N.noOk };
   }
   if (!Array.isArray(payload.notes)) {
-    return { ok: false, message: '接口返回里没有 notes 数组，形状与 api-contract.md 不一致' };
+    return { ok: false, message: N.noNotes };
   }
   return { ok: true, notes: payload.notes };
 }
@@ -159,11 +180,7 @@ async function fetchApiNotes() {
     json = await res.json();
   } catch (err) {
     // 200 但内容不是 JSON —— 典型是网关返回了一个 HTML 错误页
-    return {
-      ok: false,
-      message: '接口返回了 200，但内容不是 JSON（多半是网关的错误页）。'
-        + 'F12 → Network 点开那条请求看 Response。'
-    };
+    return { ok: false, message: ERROR_TEXT.ERROR_MESSAGES.network.notJson };
   }
 
   // HTTP 状态不是 2xx：契约的失败信封仍然在 body 里，照常解析

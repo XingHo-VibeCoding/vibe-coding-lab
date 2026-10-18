@@ -138,7 +138,9 @@ vibe-coding-lab/
 ├── styles.css        Day 7 新建 / Day 9 审查 / Day 13   样式（Day 9 按 6 条设计规则审查修复；Day 13 加导航与视图样式）
 ├── app.js            Day 7 新建 / 后续多次           全部逻辑（Day 8 四态与卡片；Day 9 标签与骨架；Day 13 hash 路由与三视图）
 ├── mock-data.js      Day 8 新建                      假数据与"假接口"（演示模式用）
-├── api.js            Day 20 新建                     真实接口的数据来源（默认不启用，配了地址才走网络）
+├── api.js            Day 20 新建 / Day 23 改文案出处  真实接口的数据来源（默认不启用，配了地址才走网络）
+├── errors.js         Day 23 新建                     三类错误的中文提示（**唯一**出处，前端两个文件共用）
+├── .env.example      Day 23 新建                     环境变量模板（只有键名没有真值；.env 本身被忽略）
 ├── README.md         Day 7 新建 / 后续多次           本文件（运行说明）
 ├── CANDIDATES.md     Day 8 新建                      下期候选清单（新想法的唯一去处）
 ├── DESIGN_REVIEW.md  Day 9 新建                      设计审查：规则、问题、修复对照
@@ -172,6 +174,10 @@ vibe-coding-lab/
 ├── skills/notelab-api-wiring/    Day 20 新建                    自检 Skill（前端接线）
 │     ├── SKILL.md           操作手册（三种"取不到数据"的分辨法、验不到的部分）
 │     └── check.cjs          配置 / 拆信封 / 形状校验 / 出错提示 / 真发请求，24 项断言，零依赖（Node 22+ 自带 fetch）
+├── skills/notelab-safety-check/  Day 23 新建             自检 Skill（上线红线）
+│     ├── SKILL.md           操作手册（红线为什么排第一、调规则踩过的三个坑、没验到的部分）
+│     ├── scan.cjs           密钥排查：8 条规则 + .env / 忽略规则，17 项断言（--selftest 另有 11 项）
+│     └── messages.cjs       三类错误提示：文案三关 + 裸报错扫描，32 项断言（--selftest 另有 5 项）
 ├── skills/notelab-api-check/     Day 17 新建 / Day 19 扩到 7 层 / Day 22 扩到 8 层   自检 Skill（云函数）
 │     ├── SKILL.md           操作手册（分层的原因、没验到的条目、重复踩过的坑）
 │     └── check.cjs          A 纯函数 / B SQL 语义 / C 入口分支 / D 写入校验 / E 真跑写入 / F 分层守卫 / G health 冒烟 / H 真跑改与删，207 项断言，零依赖（Node 22+ 内置 sqlite）
@@ -265,10 +271,29 @@ vibe-coding-lab/
    别处不许自己拼 `is_deleted = 0` —— 拼漏了**不会报错**，只会让已删的笔记静默地又冒出来。
    配套两条：DELETE 只改标记不删行；`note_tags` 标签行也留着（恢复时笔记才是完整的）。
    找回的方法是 `db/verify.sql` 第 ⑨ 段那句人工 `UPDATE`，**故意没做成自动清理**
+23. **面向用户的报错文案只有一个出处**（Day 23 起）：`errors.js`。
+   三类错误（**A 存储类** 存不下/读不出、**B 网络类** 取不到数据、**C 服务端类** 接口回了失败）
+   的提示语全在那一张表里，`app.js` / `api.js` 只取不来写。
+   每条文案要过三关：**中文** / **说清发生了什么** / **带一句下一步看哪或做什么**。
+   一句"未知错误"也是提示，但它把排查成本整个推给用户 —— 那不叫提示，叫承认失败。
+   原始错误（`QuotaExceededError` 之类）**只进 `console`**，绝不进界面
+24. **前端脚本之间不许有同名的顶层 `const` / `let`**（Day 23 起）：
+   经典脚本（不带 `type="module"`）的顶层 `const` / `let` 会进**同一个全局词法作用域**，
+   两个文件都写 `const ERRORS = …` 的结果是 `SyntaxError`，后加载的那个脚本**整个不执行**。
+   ⚠️ 这个错在 DOM 桩测试（`vm` 沙箱）里**撞不出来**（vm 里每个脚本作用域是分开的），
+   表现是"行为层 41/41 全绿、真实浏览器白屏" —— 由自检 `L-4` 扫这个重名，
+   **改了前端顶层变量名的，必须同时跑一次可见层 `render-check.js`**
+25. **密钥只以"环境变量名"的形式出现**（Day 23 起，上线红线）：
+   仓库里可以有 `process.env.DB_PASSWORD`（那是**读名字**），
+   不可以有 `password = "真实的值"`。密码放 `.env`（已被忽略）或云函数控制台的环境变量里。
+   每次提交前跑 `node skills/notelab-safety-check/scan.cjs`，必须是 **0 条命中**。
+   ⚠️ 推上公开仓库是**不可撤回**的 —— 删文件救不了已经泄的密钥，只能去服务商后台吊销
 
-> 已知欠账：`app.js`（751 行）和云函数自检 `check.cjs`（1205 行）都超过了约束 5 的 500 行。
+> 已知欠账：`app.js`（**782 行**）和云函数自检 `check.cjs`（**1250 行**）都超过了约束 5 的 500 行。
 > 拆分方案记在 `CANDIDATES.md` 的 C7 / C8，本期先不动（拆分是重构，不和新功能混在一天）。
 > `write.js`（418 行）Day 22 扩到接近上限，再往里加东西之前先考虑拆成 `write-post.js` / `write-patch.js`。
+> Day 23 新建的 `errors.js`（151 行）、`scan.cjs`（450 行）、`messages.cjs`（311 行）都在限额内 ——
+> 从 `app.js` 里**挪出**文案表是往 C7 的反方向走了一步，不是又添一笔欠账。
 
 ---
 

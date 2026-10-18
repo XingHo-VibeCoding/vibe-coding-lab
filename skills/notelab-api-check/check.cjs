@@ -800,6 +800,50 @@ async function layerC() {
     JSON.stringify(T.ok({ notes: [] })) === '{"statusCode":200,"payload":{"ok":true,"notes":[]}}' &&
     JSON.stringify(T.fail(409, '重复提交')) === '{"statusCode":409,"payload":{"ok":false,"message":"重复提交"}}',
     JSON.stringify(T.ok({ notes: [] })));
+
+  /* -------- 请求日志（Day 23 余力加练）--------
+     做法：临时把 console.log 换成收集器，打一次请求，看它记下了什么。
+     ★ 断言"记了什么"之外，还要断言"**没**记什么" ——
+       笔记正文是用户自己的内容，日志的可见范围比数据库宽，不该有它。 */
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...args) => { logs.push(args); };
+  try {
+    await api.main({
+      httpMethod: 'GET',
+      path: '/api/notes',
+      queryStringParameters: { limit: '0' }   // 0 是不合法的 limit → 回 400
+    });
+  } finally {
+    console.log = origLog;
+  }
+
+  const reqLog = logs.find((a) => typeof a[0] === 'string' && a[0].includes('请求'));
+  const f = reqLog && reqLog[1];
+  check('C-14 ★ 每个请求都记一行日志：时间 / 方法 / 路径 / 状态码 / 耗时',
+    !!f && typeof f.at === 'string' && f.method === 'GET' && f.path === '/api/notes' &&
+    f.status === 400 && typeof f.ms === 'number',
+    JSON.stringify(f));
+
+  check('C-15 ★ 日志里**没有**请求体、没有笔记正文（用户的东西不进日志）',
+    !!f && !('body' in f) && !('content' in f) && !('event' in f),
+    f ? Object.keys(f).join(',') : '（没记到日志）');
+
+  /* ★ 这一条盯的是"日志包住整个请求"这个结构：
+     日志要是写在业务逻辑的某个分支里，被 405 拦下的请求就**没有日志** ——
+     而"请求没进来 / 进来了被拒"恰恰是排查时最需要先确认的事。 */
+  const logs2 = [];
+  console.log = (...args) => { logs2.push(args); };
+  let blocked;
+  try {
+    blocked = await api.main({ httpMethod: 'PUT' });
+  } finally {
+    console.log = origLog;
+  }
+  const f2 = (logs2.find((a) => typeof a[0] === 'string' && a[0].includes('请求')) || [])[1];
+  check('C-16 ★ 被 405 拦下的请求也照样记日志（失败的请求才是最需要日志的）',
+    !!f2 && f2.method === 'PUT' && f2.status === 405,
+    JSON.stringify(f2) + ' / 响应=' + blocked.statusCode);
 }
 
 

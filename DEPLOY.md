@@ -526,3 +526,69 @@ curl -X DELETE "https://<环境ID>.service.tcloudbase.com/api/notes?id=n_xxx"
 | PATCH 返回 404 但这条明明在 | 它可能已经被软删除了 | 查 `is_deleted`，或用 ④ 第 3 条恢复 |
 | 前端 PATCH / DELETE 报跨域 | 预检没答 PATCH/DELETE | `http.js` 的 `Access-Control-Allow-Methods`（自检 H-43 守着） |
 | 控制台里 DELETE 报 500，说未知列 `is_deleted` | `schema.sql` 的 ALTER 没跑 | 回 ① 补跑建表语句 |
+
+---
+
+## 附录七｜Day 23：上线前的红线检查 + 三类错误提示 + 请求日志
+
+### ① 推上去之前先跑一次密钥排查（**红线，不能跳过**）
+
+```bash
+node skills/notelab-safety-check/scan.cjs
+```
+
+必须是 **0 条命中**。不是 0 就先处理，别先推送 —— 推上公开仓库是**不可撤回**的。
+
+真扫到时的顺序（**别只删文件**）：
+1. 去服务商后台**吊销 / 轮换**那把钥匙（删代码救不了已经泄的密钥）
+2. 把值挪进 `.env` 或云函数控制台的环境变量，代码里只留 `process.env.XXX`
+3. 最后才考虑改 git 历史（`git filter-repo`）+ 强推
+
+### ② `.env` 怎么用（本机 / 云上两种放法）
+
+| 放哪 | 怎么用 |
+|---|---|
+| 云上（**推荐**） | CloudBase 控制台 → 云函数 → `notes` → **环境变量**，加 `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`。代码不用改，它读的就是 `process.env.*` |
+| 本机 | `cp .env.example .env`，把等号右边换成自己的值。`.env` 已被 `.gitignore` 忽略，**永远不会上传** |
+
+> ⚠️ `.gitignore` 里那三行有讲究：`.env` 和 `.env.*` 一律忽略，再用
+> `!.env.example` 把模板放行。**放行那行不能带行尾注释** ——
+> `.gitignore` 不认 `# 注释` 写在模式后面，整行会被当成一个模式（Day 23 踩过）。
+
+### ③ 三类错误的提示在哪改
+
+统一在 **`errors.js`** 里，改一处三处生效：
+
+| 类 | 什么时候出现 | 在 errors.js 里的键 |
+|---|---|---|
+| A 存储类 | 存不下 / 读不出本地数据 | `ERROR_MESSAGES.storage.*` |
+| B 网络类 | 取不到接口数据（跨域 / 地址 / 形状） | `ERROR_MESSAGES.network.*` |
+| C 服务端类 | 接口明确回了失败 | `ERROR_MESSAGES.server.*` |
+
+改完跑：
+```bash
+node skills/notelab-safety-check/messages.cjs
+node skills/notelab-filter-check/render-check.js   # ★ 改了前端变量名必须跑这个
+```
+
+### ④ 请求日志怎么看（Day 23 余力加练加的）
+
+云函数每次被调用都会在控制台留一行：
+
+```
+[notelab/notes] 请求 { at: '2026-10-18T…Z', method: 'GET', path: '/api/notes', status: 200, ms: 41 }
+```
+
+四个字段正好回答"排查时最先要确认的四件事"：**进来了吗 / 哪个方法 / 哪条路径 / 成功还是失败**。
+`ms` 用来分辨"慢"还是"挂"（首启要拉连接池，第一次通常会慢一些）。
+
+★ **日志里没有请求体、没有笔记正文** —— 用户的东西不进日志（自检 C-15 守着）。
+要查某条笔记的内容，用返回的 `id` 去库里查。
+
+### 卡住时的分辨法
+
+| 现象 | 是什么病 | 看哪里 |
+|---|---|---|
+| 页面白屏、但 `run.js` 全绿 | 十有八九是前端脚本顶层 `const` 重名（浏览器 SyntaxError） | 跑 `render-check.js`；自检 `L-4` 会直接指出哪个名字重了 |
+| 提示语改了、页面上没变 | 浏览器缓存，或 `errors.js` 没传上去 | F12 → Network 看 `errors.js` 是不是 200；托管里有没有这个文件 |
+| 保存失败但提示说"浏览器不允许存储" | 老版本（Day 23 之前）的说法 | 新版会区分"写满"和"不允许" |

@@ -20,6 +20,7 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..', '..');       // 项目根目录
+const ERRORS_SOURCE = fs.readFileSync(path.join(ROOT, 'errors.js'), 'utf8');  // Day 23：报错文案
 const MOCK_SOURCE = fs.readFileSync(path.join(ROOT, 'mock-data.js'), 'utf8');
 const APP_SOURCE = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
 const MOCK_NOTE_COUNT = 10;                          // mock-data.js 里的假笔记条数
@@ -37,7 +38,17 @@ function makeElement(tag) {
     listeners: {},
     attributes: {},
     dataset: {},
-    value: '', textContent: '', className: '', type: '',
+    value: '', className: '', type: '',
+    /* ★ Day 23：记住每次给 textContent 赋过什么值（textHistory）。
+       为什么不能直接读 textContent：
+         本沙箱里的 setTimeout 是"立刻执行"的（好让假接口那 700ms 不用真等），
+         于是 showHint() 设完文字之后、那个"3000ms 后清空"的定时器**同步**就跑了，
+         直接读 textContent 只会读到空串 —— 只看当前值会把"提示过"误判成"没提示"。
+       有了历史，就能断言"它确实显示过那句话"。 */
+    _text: '',
+    textHistory: [],
+    get textContent() { return this._text; },
+    set textContent(v) { this._text = String(v); this.textHistory.push(String(v)); },
     hidden: false,
     disabled: false,
     appendChild(child) { el.children.push(child); return child; },
@@ -78,10 +89,16 @@ const SEED_NOTES = [
 ];
 
 /* ------------------------------------------------------------
-   boot(search)：起一个干净的"页面"，返回取句柄的入口、以及模拟跳转的方法
-   search 传 '?demo=1&state=empty' 之类就进演示模式的某种状态
+   boot(search, opts)：起一个干净的"页面"，返回取句柄的入口、以及模拟跳转的方法
+     search 传 '?demo=1&state=empty' 之类就进演示模式的某种状态
+     opts.failSetItemFor + opts.storageError  Day 23 新增：
+       让 localStorage.setItem 在写**指定那个键**时抛出指定错误，
+       用来验"存储写满"和"存储被禁用"给出的是两句不同的话。
+       （只对指定键生效，是为了让 loadNotes 里那次 notelab.probe 探测照常通过，
+         这样才测得到"探测通过、真正保存时写满"这条真实路径。）
    ------------------------------------------------------------ */
-function boot(search) {
+function boot(search, opts) {
+  const o = opts || {};
   const byId = {};
   const hashListeners = [];
   const storage = new Map();
@@ -103,7 +120,10 @@ function boot(search) {
   };
 
   const localStorage = {
-    setItem(k, v) { storage.set(k, String(v)); },
+    setItem(k, v) {
+      if (o.failSetItemFor && k === o.failSetItemFor) throw o.storageError;
+      storage.set(k, String(v));
+    },
     getItem(k) { return storage.has(k) ? storage.get(k) : null; },
     removeItem(k) { storage.delete(k); },
   };
@@ -124,7 +144,11 @@ function boot(search) {
   };
 
   vm.createContext(sandbox);
-  // 顺序必须和 index.html 里一致：先 mock-data.js（提供 fetchMockNotes），再 app.js
+  // 顺序必须和 index.html 里一致（Day 23 起多了一个 errors.js，它排在最前）：
+  //   errors.js（提供报错文案）→ mock-data.js（提供 fetchMockNotes）→ app.js
+  // ★ 顺序错了的表现是 app.js 读不到 window.NoteLabErrors 而报错，
+  //   看起来像"app.js 有 bug"，其实是这个测试环境没跟上真实页面。
+  vm.runInContext(ERRORS_SOURCE, sandbox, { filename: 'errors.js' });
   vm.runInContext(MOCK_SOURCE, sandbox, { filename: 'mock-data.js' });
   vm.runInContext(APP_SOURCE, sandbox, { filename: 'app.js' });
 
@@ -277,6 +301,51 @@ function section(title) { console.log(`== ${title} ==`); }
     errorPage.byId['review-status'].textContent.includes('全部笔记'),
     errorPage.byId['review-status'].textContent);
 
+  /* ---------- D 存储错误：写满 ≠ 被禁用（Day 23）---------- */
+  section('D 存储错误：写满和被禁用要说两句不同的话');
+
+  // ① 探测能过、真正保存时写满 —— 改前这条会被误报成"浏览器不允许本地存储"，
+  //    而它的解法（删几条旧笔记）和"不允许存储"（换窗口）完全不同。
+  const quotaPage = boot('', {
+    failSetItemFor: 'notelab.notes.v1',
+    storageError: { name: 'QuotaExceededError', message: 'The quota has been exceeded.' }
+  });
+  quotaPage.byId['note-input'].value = '这条写不进去 #测试';
+  quotaPage.byId['save-btn'].trigger('click');
+  const quotaHint = quotaPage.byId['input-hint'].textHistory.filter((t) => t !== '');
+
+  check('D-1 ★ 空间写满 → 提示里说"写满"（改前一律说"不允许本地存储"）',
+    quotaHint.some((t) => t.includes('写满')), JSON.stringify(quotaHint));
+  check('D-2 ★ 空间写满 → 提示里**不**说"不允许"（说了就是把人往错路上引）',
+    !quotaHint.some((t) => t.includes('不允许')), JSON.stringify(quotaHint));
+  check('D-3 空间写满 → 给了能做的一步（删掉一些旧笔记）',
+    quotaHint.some((t) => t.includes('删掉')), JSON.stringify(quotaHint));
+
+  // ② 隐私模式：连"探测写一下"都过不去，存储根本不能用
+  const blockedPage = boot('', {
+    failSetItemFor: 'notelab.probe',
+    storageError: { name: 'SecurityError', message: 'The operation is insecure.' }
+  });
+  const blockedHint = blockedPage.byId['input-hint'].textHistory.filter((t) => t !== '');
+
+  check('D-4 ★ 存储被禁用 → 提示说"不允许"（隐私模式）',
+    blockedHint.some((t) => t.includes('不允许')), JSON.stringify(blockedHint));
+  check('D-5 ★ 两句提示确实**不是同一句**（否则分类等于白分）',
+    !blockedHint.some((t) => t.includes('写满')) &&
+    !quotaHint.some((t) => t.includes('不允许')),
+    JSON.stringify(blockedHint));
+  check('D-6 存储被禁用 → 也给了出路（换窗口 / 先复制走）',
+    blockedHint.some((t) => t.includes('换') || t.includes('复制')),
+    JSON.stringify(blockedHint));
+
+  // ③ 正常情况不该被上面的改动误伤：能存的时候要回一句"已保存"
+  const normalPage = boot('');
+  normalPage.byId['note-input'].value = '能存进去的一条 #正常';
+  normalPage.byId['save-btn'].trigger('click');
+  check('D-7 正常保存 → 提示"已保存"，没有被错误分支抢走',
+    normalPage.byId['input-hint'].textHistory.includes('已保存'),
+    JSON.stringify(normalPage.byId['input-hint'].textHistory));
+
   /* ---------- 汇总 + 写调用记录 ---------- */
   const total = results.length;
   const passed = results.filter((r) => r.ok).length;
@@ -290,7 +359,7 @@ function section(title) { console.log(`== ${title} ==`); }
   const stamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
   fs.appendFileSync(logPath,
     `- ${stamp}（node run.js）${passed}/${total} 项通过 ${passed === total ? '✅' : '❌'}：` +
-    'A 视图切换 / B 筛选交互 / C 四种页面状态\n');
+    'A 视图切换 / B 筛选交互 / C 四种页面状态 / D 存储错误的两类提示（Day 23 起）\n');
 
   process.exit(passed === total ? 0 : 1);
 })();

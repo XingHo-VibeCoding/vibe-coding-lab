@@ -45,13 +45,34 @@ const write = require('./write');
 /* ------------------------------------------------------------
    入口
    ------------------------------------------------------------ */
-exports.main = async (event) => {
-  const e = event || {};
+/* ------------------------------------------------------------
+   请求日志（Day 23 余力加练）
+   ------------------------------------------------------------
+   只记四样：**什么时候、哪个方法、哪条路径、结果是什么**（外加花了多久）。
+   为什么是这四样：排查"接口是不是挂了"时，你要回答的其实就是
+   "刚才那一下到底有没有进来、进来之后是成功还是失败"。
+   多了没用还占日志额度；少了就只能靠猜。
 
-  // HTTP 访问服务会把请求信息放进 event（官方文档给的结构）。
-  // 大写化是防御性的：值来自网关，真跑之前没法确认它一定给大写；
-  // 万一给的是 'get'，不做这一步就会把一个正常的 GET 判成 405。
-  const method = String(e.httpMethod || 'GET').toUpperCase();
+   ★ **不记**请求体和正文（和 write.js 里那条日志同一个规矩）：
+     笔记内容是用户自己的东西，日志的可见范围比数据库宽。
+
+   ★ 用一行 console.log 而不是"日志框架"：
+     今天明确不做复杂异常处理框架。云函数的日志在控制台里能直接看、能检索，
+     一行就够了 —— 等真出现"查不动"的那天再说。
+   ------------------------------------------------------------ */
+function logRequest(startedAt, method, path, status) {
+  console.log('[notelab/notes] 请求', {
+    at: new Date().toISOString(),
+    method,
+    path,
+    status,
+    ms: Date.now() - startedAt
+  });
+}
+
+/** 真正的处理逻辑（入口 main 只负责"计时 + 记一行"） */
+async function handle(event, method) {
+  const e = event || {};
 
   // 浏览器的"预检"（JSON 格式的 POST 之前，浏览器会先问一句"我能发吗"）。
   // 不答它，前端将来的 POST 会在浏览器控制台报跨域错 —— 而且报的错
@@ -120,11 +141,46 @@ exports.main = async (event) => {
       code: error && error.code
     });
     // 前端展示"出错状态"时要的是一句人话 + 重试按钮（契约第五节 500）
+    // ★ Day 23：这句文案与前端 errors.js 的 server.withStatus(500) 是**同一类错误的两个说法**，
+    //   改任何一边都要看一眼另一边，别让用户在同一件事上读到两种解释。
     return toResponse(fail(500, '服务器开小差了'));
   } finally {
     // 只还连接，不销毁连接池：池是跨调用复用的（见 db.js 的 getPool 注释）
     if (conn) conn.release();
   }
+}
+
+
+/* ------------------------------------------------------------
+   入口：只做"认出这是什么请求 + 计时 + 记一行日志"
+   ------------------------------------------------------------
+   ★ 为什么把 main 拆薄、把逻辑放进 handle：
+     记日志这件事要**包住整个请求**，不管成功失败都得记一行 ——
+     混在业务逻辑里的话，每个 return 分支前面都得记得写一遍，
+     漏一个分支就变成"失败的请求没有日志"，而那恰恰是最需要日志的时候。
+   ------------------------------------------------------------ */
+exports.main = async (event) => {
+  const startedAt = Date.now();
+  const e = event || {};
+
+  // HTTP 访问服务会把请求信息放进 event（官方文档给的结构）。
+  // 大写化是防御性的：值来自网关，真跑之前没法确认它一定给大写；
+  // 万一给的是 'get'，不做这一步就会把一个正常的 GET 判成 405。
+  const method = String(e.httpMethod || 'GET').toUpperCase();
+  const path = e.path || '/api/notes';   // 网关不一定给，给不出就当默认路径
+
+  let res;
+  try {
+    res = await handle(e, method);
+  } catch (error) {
+    // handle 内部已经兜住"连库失败"这类；走到这儿说明是没预料到的错误。
+    // 这里只回一句人话，真实原因记在下面那行 error 里。
+    console.error('[notelab/notes] 入口没兜住的错误', { error: error && error.message });
+    res = toResponse(fail(500, '服务器开小差了'));
+  }
+
+  logRequest(startedAt, method, path, res.statusCode);
+  return res;
 };
 
 
