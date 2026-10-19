@@ -29,6 +29,21 @@ const { execFileSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 
+/* ★ 模板文件名白名单：这些是"本来就该进仓库"的示例文件（只有键名、没有值），
+   不是密钥载体。凡是"仓库里不许有 .env"的断言，都必须先把它们摘出去。
+
+   为什么非要显式摘：git 的路径通配符 `.env.*` **会匹配 `.env.example`**，
+   于是 `git ls-files .env .env.*` 一提交模板就报红。
+   2026-10-19 真实踩到：Day 23 当晚 .env.example 还没提交，S-02/S-03 侥幸全绿；
+   第二天模板进了仓库，同一份代码立刻变红 —— 那三条从来没真正验过"稳态"。 */
+const ENV_TEMPLATES = [
+  '.env.example', '.env.sample', '.env.template', '.env.dist', '.env.defaults'
+];
+function isEnvTemplate(relPath) {
+  const base = String(relPath).trim().split(/[\\/]/).pop();
+  return ENV_TEMPLATES.indexOf(base) !== -1;
+}
+
 /* ---------- 输出用的小工具 ---------- */
 let pass = 0;
 const failures = [];
@@ -312,13 +327,25 @@ function main() {
   console.log('  ' + (envExists ? '· 工作区里有 .env（这是**正常且必要**的：密码得有个地方放）'
                                  : '· 工作区里没有 .env'));
 
-  const tracked = git(['ls-files', '.env', '.env.*']).trim();
-  check('S-02 ★ 版本库里**没有** .env（git ls-files 查不到）',
-    tracked === '', tracked);
+  // 注意：'.env.*' 会把 .env.example 一起捞上来，所以命中后要过一遍 isEnvTemplate
+  const trackedAll = git(['ls-files', '.env', '.env.*'])
+    .split('\n').map((s) => s.trim()).filter(Boolean);
+  const trackedEnv = trackedAll.filter((f) => !isEnvTemplate(f));
+  check('S-02 ★ 版本库里**没有** .env（git ls-files 查不到；模板 .env.example 不算）',
+    trackedEnv.length === 0,
+    trackedEnv.length ? trackedEnv.join(', ')
+                      : (trackedAll.length ? '只有模板 ' + trackedAll.join(', ') : ''));
 
-  const inHistory = git(['log', '--all', '--oneline', '--', '.env', '.env.*']).trim();
+  // 历史同理：只看"非模板"的 .env 是否曾经进过任何一次提交
+  const histLines = git(['log', '--all', '--pretty=format:C|%h %s', '--name-only',
+                         '--', '.env', '.env.*'])
+    .split('\n').map((s) => s.trim()).filter(Boolean);
+  const histBad = histLines.filter((l) => !/^C\|/.test(l) && !isEnvTemplate(l));
+  const histTpl = histLines.filter((l) => !/^C\|/.test(l) && isEnvTemplate(l));
   check('S-03 ★ git 历史里**从未**出现过 .env（泄露了删文件也没用，历史还在）',
-    inHistory === '', inHistory.split('\n')[0]);
+    histBad.length === 0,
+    histBad.length ? histBad.join(', ')
+                   : (histTpl.length ? '只有模板 ' + [...new Set(histTpl)].join(', ') : ''));
 
   const ig1 = ignoredBy('.env');
   check('S-04 .env 被 .gitignore 忽略', ig1 !== '', '没命中任何忽略规则');
@@ -342,11 +369,20 @@ function main() {
      同一个事实换个问法，两边对得上才算数。 */
   const statusLines = git(['status', '--porcelain', '--ignored'])
     .split('\n').filter((l) => /env/i.test(l));
-  const envLine = statusLines.find((l) => l.trim().endsWith('.env'));
-  const exLine = statusLines.find((l) => l.trim().endsWith('.env.example'));
-  check('S-08 ★ 交叉验证：git status 里 .env 是 !!（已忽略）、.env.example 是 ??（可提交）',
-    /^!!/.test(envLine || '') && /^\?\?/.test(exLine || ''),
-    (envLine || '(.env 没出现)') + ' / ' + (exLine || '(.env.example 没出现)'));
+  /* ★ 只认"文件名正好是 .env"的那一行：原来的 endsWith('.env') 看着没事，
+     但一旦换成别的匹配写法就很容易把 .env.example 吃进来，这里显式取文件名再比。 */
+  const nameOf = (l) => l.trim().replace(/^\S+\s+/, '').trim();
+  const envLine = statusLines.find((l) => nameOf(l) === '.env');
+  const exLine = statusLines.find((l) => nameOf(l) === '.env.example');
+  /* ★ 原来强求 .env.example 必须显示 "??"（未跟踪）—— 那是把"还没提交"
+     当成了"应该没提交"。模板一旦提交进仓库就**不再出现**在 status 里，
+     于是这条第二天必然假红。正确的问法是：它**不能**是 !!（被忽略）就行。 */
+  const envOk = envExists ? /^!!/.test(envLine || '') : !envLine;
+  const exOk = !exLine || !/^!!/.test(exLine);
+  check('S-08 ★ 交叉验证：.env 是 !!（推不上去）、.env.example 不是 !!（能进仓库）',
+    envOk && exOk,
+    (envLine || (envExists ? '(.env 没出现在 status)' : '(本机没有 .env)')) + ' / ' +
+    (exLine || '(.env.example 已提交，不出现在 status —— 正常)'));
 
   check('S-09 .env.example 存在，且里面只有占位符没有真值',
     (() => {
@@ -435,6 +471,29 @@ function selftest() {
   const urlHits = scanText(url, '文档地址.txt');
   check('R8 反向：文档 URL 不被误报（先剥 URL 再扫，否则全是噪音）',
     urlHits.length === 0, JSON.stringify(urlHits.map((h) => h.evidence)));
+
+  /* ★ 反向：模板白名单必须**窄**。
+     昨天修 S-02/S-03 时最容易犯的错，是把豁免写成"凡是 .env.* 都放过" ——
+     那样 S-02/S-03 就变成永远通过的空断言：真有人把 .env 提交上去也会被豁免。
+     所以豁免了什么、没豁免什么，都得钉住。 */
+  check('T-1 模板判定：.env.example 被认成模板（仓库里有它不算泄露）',
+    isEnvTemplate('.env.example') === true);
+  check('T-2 ★ 模板判定：.env **不**被豁免（否则真泄露会被放过 —— 防 S-02 变空断言）',
+    isEnvTemplate('.env') === false);
+  check('T-3 ★ 模板判定：.env.production 不被豁免（改个名就能推上去的口子不能开）',
+    isEnvTemplate('.env.production') === false);
+  check('T-4 ★ 模板判定：.env.bak 不被豁免（备份文件里常常就是真密码）',
+    isEnvTemplate('.env.bak') === false);
+
+  /* ★ 再往正方向走一步：光证明"没豁免过头"还不够，还得证明"真出事时它仍会叫"。
+     用 S-02 里那句一模一样的过滤逻辑跑一遍模拟数据 ——
+     注意这里**不能**真的去 `git add -f .env`（那是把真密钥往索引里塞），
+     用模拟数据一样能证明过滤器的行为。 */
+  const simulated = ['.env', '.env.example', '.env.sample']
+    .filter((f) => !isEnvTemplate(f));
+  check('T-5 ★ 模拟：真把 .env 提交进仓库时，S-02 仍能抓到（过滤后只剩 .env）',
+    simulated.length === 1 && simulated[0] === '.env',
+    '过滤结果 ' + JSON.stringify(simulated));
 
   console.log('\n' + '='.repeat(64));
   console.log('扫描器自检：' + pass + '/' + (pass + failures.length) + ' 通过');
