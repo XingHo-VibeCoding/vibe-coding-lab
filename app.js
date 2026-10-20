@@ -100,6 +100,54 @@ function setView(id, options = {}) {
    分出来之后，提示语由 errors.js 按类给。 */
 let lastStorageReason = null;
 
+/* ------------------------------------------------------------
+   Day 24：笔记数组的**第二层**校验
+   ------------------------------------------------------------
+   原来只验了第一层（"这是不是一个数组"），就当数据合格了。
+   可数组里混进 null、或者某条笔记缺 content 时，它照样是个合法的数组 ——
+   于是这些坏条目一路走到 renderTagList / getVisibleNotes 里炸掉：
+       TypeError: Cannot read properties of null (reading 'tags')        app.js:328
+       TypeError: Cannot read properties of undefined (reading 'toLowerCase') app.js:285
+   炸在 bootstrap() 里是个未捕获异常，整页停在那儿，列表空白 ——
+   连 errors.js 里承诺的那句"页面不会卡住"都没兑现。
+
+   ★ 有意思的是"数据**整块**坏掉"反而没事：
+       JSON 整个不合法  → JSON.parse 抛错 → 被下面的 catch 接住，还会说人话
+       顶层不是数组     → 被 Array.isArray 拦住
+   唯独"半好半坏"这一档没人管 —— 缺口就在这里。
+
+   修法：不合格的条目丢掉，合格的照常显示。坏一条不该连累其余全部。
+   ------------------------------------------------------------ */
+
+/** 一条"能用"的笔记：得是个对象，正文得是字符串 */
+function isUsableNote(item) {
+  return !!item &&
+         typeof item === 'object' &&
+         !Array.isArray(item) &&
+         typeof item.content === 'string';
+}
+
+/**
+ * 逐条筛，返回 { notes, dropped, droppedItems }
+ * ★ droppedItems 是**原样留下**的坏条目，只进 console：
+ *   用户拿着它才能知道"到底是哪几条坏了"，不然提示里那句"看 Console"就是空头支票。
+ */
+function sanitizeNotes(list) {
+  if (!Array.isArray(list)) {
+    // 顶层就不是数组：没有"一条笔记"可言，整体按空列表处理
+    // （list 是 null/undefined 表示压根没存过东西，那不算坏）
+    const bad = (list === null || list === undefined) ? [] : [list];
+    return { notes: [], dropped: bad.length, droppedItems: bad };
+  }
+  const kept = [];
+  const droppedItems = [];
+  list.forEach((item) => {
+    if (isUsableNote(item)) kept.push(item);
+    else droppedItems.push(item);
+  });
+  return { notes: kept, dropped: droppedItems.length, droppedItems };
+}
+
 function loadNotes() {
   try {
     // 先做一次写入测试：隐私模式下 setItem 会直接抛错
@@ -108,9 +156,20 @@ function loadNotes() {
     storageAvailable = true;
 
     const raw = localStorage.getItem(STORAGE_KEY);
-    notes = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(notes)) notes = [];   // 数据被改坏时兜底
-    lastStorageReason = null;
+    const parsed = raw ? JSON.parse(raw) : null;
+    const checked = sanitizeNotes(parsed);          // Day 24：第二层校验
+    notes = checked.notes;
+    if (checked.dropped > 0) {
+      /* 有条目被丢掉 = 数据确实坏了。
+         ★ 这里**不能**闷声丢掉：用户会发现自己的笔记少了，却不知道为什么少。
+           一句提示 + 一条 console 记录（告诉他是哪几条），才算把事情说清楚。
+           原始条目只进 console —— 界面上给人话（Day 23 立的规矩）。 */
+      lastStorageReason = 'partial';
+      console.warn('[notelab] 有 ' + checked.dropped + ' 条笔记数据不合格，已跳过：',
+        checked.droppedItems);
+    } else {
+      lastStorageReason = null;
+    }
   } catch (err) {
     lastStorageReason = ERRORS.describeStorageError(err);
     storageAvailable = false;
@@ -152,6 +211,11 @@ function makeId() {
 
 function formatTime(iso) {
   const d = new Date(iso);
+  /* Day 24 加练（第二个、低优先级的 Bug）：时间字段是乱码时，
+     原来会老老实实算出「NaN-NaN-NaN NaN:NaN」—— 页面不崩，但它在**说假话**。
+     用户看到一排 NaN 只会觉得"这软件坏了"，而它明明可以说一句听得懂的。
+     不崩的 Bug 更容易被放过，因为它不会在控制台喊一声。 */
+  if (Number.isNaN(d.getTime())) return '时间未知';
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
          `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -746,7 +810,9 @@ function bootstrap() {
         setPageState('error', res.message);              // 出错：说明原因 + 给"重试"
         return;
       }
-      notes = res.notes;
+      // Day 24：接口/演示来的数据同样过一遍第二层校验 ——
+      // 服务端返回一条 content 是 null 的笔记，崩法跟本地数据坏掉是一模一样的
+      notes = sanitizeNotes(res.notes).notes;
       setPageState(notes.length > 0 ? 'success' : 'empty');
     });
     return;
@@ -763,7 +829,7 @@ function bootstrap() {
         setPageState('error', res.message);   // 出错：说明原因 + 给"重试"
         return;
       }
-      notes = res.notes;
+      notes = sanitizeNotes(res.notes).notes;        // Day 24：同上
       setPageState(notes.length > 0 ? 'success' : 'empty');
       updateSourceLine();
     });
@@ -773,8 +839,11 @@ function bootstrap() {
     setPageState(notes.length > 0 ? 'success' : 'empty');
   }
 
-  if (!storageAvailable) {
-    showHint(storageHint(), true, 0);   // Day 23：按"不可用 / 写满 / 数据坏"给不同的话
+  /* Day 24：原来是 `if (!storageAvailable)` —— 只看"存储能不能用"。
+     可"存储能用、但里面有坏条目"也是一种数据坏了（lastStorageReason='partial'），
+     按老写法这种情况一句话都不说。改成两个条件都说话。 */
+  if (!storageAvailable || lastStorageReason) {
+    showHint(storageHint(), true, 0);   // 按"不可用 / 写满 / 数据坏 / 部分坏了"给不同的话
   }
 }
 

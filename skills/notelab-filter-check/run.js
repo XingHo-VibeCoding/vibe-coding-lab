@@ -103,6 +103,11 @@ function boot(search, opts) {
   const hashListeners = [];
   const storage = new Map();
   storage.set('notelab.notes.v1', JSON.stringify(SEED_NOTES));
+  /* Day 24：允许直接塞一段**原始**存储内容（而不是塞一个现成的数组），
+     用来复现"数据半好半坏"的现场 —— 数组里混进 null、某条缺 content。
+     ★ 必须传字符串：真实 localStorage 里存的就是字符串，
+       传数组的话 JSON.parse 那一步就被绕过去了，测不到真东西。 */
+  if (o.rawStorage !== undefined) storage.set('notelab.notes.v1', o.rawStorage);
 
   // 三个导航链接（app.js 靠 dataset.view 认视图），必须先于 document 建好
   const navLinks = ['write', 'notes', 'review'].map((id) => {
@@ -156,6 +161,9 @@ function boot(search, opts) {
     byId,
     navLinks,
     location,
+    // Day 24：把沙箱也放出来，好在断言里直接调 sanitizeNotes 之类的纯函数
+    // （比"页面没崩"更硬 —— 崩不崩还可能被别的因素掩盖）
+    sandbox,
     // 模拟地址变化：改 hash 再通知监听器
     goto(hash) {
       location.hash = hash;
@@ -346,6 +354,65 @@ function section(title) { console.log(`== ${title} ==`); }
     normalPage.byId['input-hint'].textHistory.includes('已保存'),
     JSON.stringify(normalPage.byId['input-hint'].textHistory));
 
+  /* ---------- E 数据坏一半：不能崩，也不能闷声丢（Day 24）---------- */
+  section('E 数据坏一半：坏的跳过、好的留下，而且得吭声');
+
+  /* 为什么要有这一段：
+     改前 loadNotes 只验"是不是数组"，数组里混进 null 或缺 content 的条目照样往下走，
+     最后炸在 renderTagList（null.tags）和 getVisibleNotes（undefined.toLowerCase）。
+     而且这两处的触发条件**不一样**：不搜索时只是把 undefined 当正文显示出来（页面看着还在，
+     其实在说谎），一搜索才当场崩。所以下面两个都要测，只测一个会以为问题不大。 */
+  const HALF_BAD = JSON.stringify([
+    null,
+    { id: 'ok1', content: '这条是完整的 #想法', tags: ['想法'], createdAt: '2026-10-02T10:00:00.000Z' },
+    { id: 'bad', tags: ['想法'], createdAt: '2026-10-01T10:00:00.000Z' }   // 缺 content
+  ]);
+
+  let halfPage = null;
+  let bootThrew = null;
+  try { halfPage = boot('', { rawStorage: HALF_BAD }); }
+  catch (e) { bootThrew = e; }
+
+  check('E-1 ★ 数组里混了 null / 缺字段的笔记，页面**不崩**（改前 TypeError 崩在 renderTagList）',
+    bootThrew === null, bootThrew && bootThrew.message);
+  check('E-2 合格的笔记照常显示（坏一条不该连坐全部消失）',
+    !!halfPage && halfPage.byId['note-count'].textContent === '共 1 条',
+    halfPage && halfPage.byId['note-count'].textContent);
+  check('E-3 ★ 丢掉的那几条**有提示**，不是闷声丢（改前一句都不说）',
+    !!halfPage && halfPage.byId['input-hint'].textHistory.some((t) => t.includes('跳过')),
+    halfPage && JSON.stringify(halfPage.byId['input-hint'].textHistory.filter((t) => t !== '')));
+
+  // 搜索时崩的是另一处（getVisibleNotes 里的 content.toLowerCase），单独盯住
+  let searchThrew = null;
+  try {
+    const s = halfPage.byId['search-input'];
+    s.value = '想法';
+    s.trigger('input');
+  } catch (e) { searchThrew = e; }
+  check('E-4 ★ 坏数据 + 搜索也**不崩**（改前 TypeError 崩在 getVisibleNotes）',
+    searchThrew === null, searchThrew && searchThrew.message);
+
+  /* 整块坏掉 vs 坏一半：这是两种病，得说两句不同的话。
+     整块坏掉（JSON 整个不合法）改前就有人兜着 → 说"已按空列表继续"；
+     坏一半才是我今天补的 → 说"已经跳过，其余照常显示"。 */
+  const wholeBadPage = boot('', { rawStorage: '这不是合法的 JSON' });
+  const wholeBadHints = wholeBadPage.byId['input-hint'].textHistory.filter((t) => t !== '');
+  check('E-5 ★ 整块坏掉说"空列表"、坏一半说"跳过"，两种坏法不是同一句话',
+    wholeBadHints.some((t) => t.includes('空列表')) && !wholeBadHints.some((t) => t.includes('其余')),
+    JSON.stringify(wholeBadHints));
+
+  // 直接验函数本身：比"页面没崩"更硬
+  const sb = halfPage.sandbox;
+  const s1 = sb.sanitizeNotes([{ content: 'x' }, null]);
+  check('E-6 sanitizeNotes：不合格的丢掉、合格的留下，并记录丢了哪几条（不是只报个数字）',
+    s1.dropped === 1 && s1.notes.length === 1 && s1.droppedItems.length === 1,
+    JSON.stringify({ dropped: s1.dropped, kept: s1.notes.length }));
+  check('E-7 ★ sanitizeNotes：压根没存过东西（null）**不算坏**，不能误报"数据坏了"',
+    sb.sanitizeNotes(null).dropped === 0);
+  check('E-8 ★ sanitizeNotes：顶层不是数组也算坏（不能睁眼放过）',
+    sb.sanitizeNotes('我是字符串').dropped === 1 &&
+    sb.sanitizeNotes('我是字符串').notes.length === 0);
+
   /* ---------- 汇总 + 写调用记录 ---------- */
   const total = results.length;
   const passed = results.filter((r) => r.ok).length;
@@ -359,7 +426,8 @@ function section(title) { console.log(`== ${title} ==`); }
   const stamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
   fs.appendFileSync(logPath,
     `- ${stamp}（node run.js）${passed}/${total} 项通过 ${passed === total ? '✅' : '❌'}：` +
-    'A 视图切换 / B 筛选交互 / C 四种页面状态 / D 存储错误的两类提示（Day 23 起）\n');
+    'A 视图切换 / B 筛选交互 / C 四种页面状态 / D 存储错误的两类提示（Day 23 起）' +
+    ' / E 数据坏一半不崩且会吭声（Day 24 起）\n');
 
   process.exit(passed === total ? 0 : 1);
 })();

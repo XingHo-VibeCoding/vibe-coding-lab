@@ -27,3 +27,7 @@ Thumbs.db
 # 日志与缓存
 *.log
 .cache/
+
+# Day 24：故障猎手每次跑都会重写的明细（BEFORE.txt / AFTER.txt 是留证，要提交；
+# 这份只是过程数据，提交上去会每次都产生无意义的改动）
+LASTHUNT.json

@@ -288,8 +288,20 @@ vibe-coding-lab/
    不可以有 `password = "真实的值"`。密码放 `.env`（已被忽略）或云函数控制台的环境变量里。
    每次提交前跑 `node skills/notelab-safety-check/scan.cjs`，必须是 **0 条命中**。
    ⚠️ 推上公开仓库是**不可撤回**的 —— 删文件救不了已经泄的密钥，只能去服务商后台吊销
+26. **笔记数据要验两层**（Day 24 起）：
+   第一层"这是不是一个数组"（`loadNotes` 早就有），
+   第二层"数组里**每一条**是不是合格的笔记"（`sanitizeNotes` / `isUsableNote`）。
+   ⚠️ 只验第一层会漏掉**半好半坏**的数据：数组里混进 `null` 或缺 `content` 的条目时，
+   它照样是个合法数组，会一路走到渲染函数里炸掉
+   （`TypeError: Cannot read properties of null (reading 'tags')`）。
+   ★ 反直觉的是：数据**整块**坏掉反而没事 ——
+     `JSON.parse` 抛错有 `catch` 接、顶层不是数组有 `Array.isArray` 拦，都会说人话；
+     缺口恰恰在"半坏"这一档。
+   ★ 三个入口（本地存储 / 演示模式 / 真接口）**都要过**这一层，只堵一个等于没堵。
+   回归断言在 `skills/notelab-filter-check/run.js` 的 E 段（E-1～E-8），
+   复现工具是 `skills/notelab-bug-hunt/hunt.cjs`（16 个刁钻用例，必须是 0 报错）
 
-> 已知欠账：`app.js`（**782 行**）和云函数自检 `check.cjs`（**1250 行**）都超过了约束 5 的 500 行。
+> 已知欠账：`app.js`（**850 行**）和云函数自检 `check.cjs`（**1250 行**）都超过了约束 5 的 500 行。
 > 拆分方案记在 `CANDIDATES.md` 的 C7 / C8，本期先不动（拆分是重构，不和新功能混在一天）。
 > `write.js`（418 行）Day 22 扩到接近上限，再往里加东西之前先考虑拆成 `write-post.js` / `write-patch.js`。
 > Day 23 新建的 `errors.js`（151 行）、`scan.cjs`（450 行）、`messages.cjs`（311 行）都在限额内 ——

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>NoteLab 故障复现 · 数据播种</title></head>
+<body>
+<p>这一页只做一件事：把一段"刁钻数据"写进 localStorage，然后由 hunt.cjs 跳到真正的 index.html。</p>
+<p id="out">…</p>
+<script>
+/* 为什么非要单独一页播种：
+   localStorage 是**同源**的，必须先访问 127.0.0.1:8123 这个源把数据写进去，
+   再打开同源的 index.html —— 这样复现用的是**原封不动的 index.html**，
+   一行都没为测试改过。改过的页面测出来的东西不算数。 */
+(function () {
+  const key = 'notelab.notes.v1';
+  const cases = {
+    /* 一条笔记**缺 content 字段**：手贱在 DevTools 里改过数据，
+       或者接口返回了一条字段不齐的笔记，都会是这个样子 */
+    'missing-content': JSON.stringify([
+      { id: 'n_bad', tags: ['想法'], createdAt: '2026-10-01T10:00:00.000Z' },
+      { id: 'n_ok', content: '这条是完整的 #想法', tags: ['想法'], createdAt: '2026-10-02T10:00:00.000Z' }
+    ]),
+    /* 数组里混进一个字符串（不是对象） */
+    'string-element': JSON.stringify([
+      '我不是一条笔记，我只是个字符串',
+      { id: 'n_ok', content: '这条是完整的', tags: [], createdAt: '2026-10-02T10:00:00.000Z' }
+    ]),
+    /* 数组里有一个 null */
+    'null-element': JSON.stringify([
+      null,
+      { id: 'n_ok', content: '这条是完整的', tags: [], createdAt: '2026-10-02T10:00:00.000Z' }
+    ]),
+    /* content 是 null（字段在，值是空） */
+    'null-content': JSON.stringify([
+      { id: 'n_bad', content: null, tags: [], createdAt: '2026-10-01T10:00:00.000Z' },
+      { id: 'n_ok', content: '这条是完整的', tags: [], createdAt: '2026-10-02T10:00:00.000Z' }
+    ]),
+    /* createdAt 是乱码：不崩，但时间会显示成 NaN（第二个低优先级 Bug 的素材） */
+    'bad-time': JSON.stringify([
+      { id: 'n_ok', content: '这条是完整的', tags: [], createdAt: 'not-a-date' }
+    ]),
+    /* ---- 下面两组是**排除用**的对照组，用来证伪"是不是数据整体坏了" ---- */
+    /* 整个 JSON 就是坏的（JSON.parse 会抛错）—— 这一路本来就有人兜着 */
+    'broken-json': '这不是合法的 JSON',
+    /* JSON 合法但顶层不是数组 —— 也有一句 Array.isArray 兜着 */
+    'broken-not-array': '{"oops":"我是个对象，不是数组"}',
+
+    /* 对照组：数据完全正常，用来证明"同样的启动流程本来是不报错的" */
+    'clean': JSON.stringify([
+      { id: 'n_1', content: '第一条 #想法', tags: ['想法'], createdAt: '2026-10-01T10:00:00.000Z' },
+      { id: 'n_2', content: '第二条 #待办', tags: ['待办'], createdAt: '2026-10-02T10:00:00.000Z' }
+    ])
+  };
+
+  const name = new URLSearchParams(location.search).get('case') || 'clean';
+  try {
+    localStorage.setItem(key, cases[name]);
+    document.getElementById('out').textContent = '已写入用例 ' + name + '（' + cases[name].length + ' 字节）';
+  } catch (e) {
+    document.getElementById('out').textContent = '写入失败：' + e.message;
+  }
+})();
+</script>
+</body>
+</html>
