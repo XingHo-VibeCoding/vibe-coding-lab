@@ -181,8 +181,41 @@ vibe-coding-lab/
 ├── skills/notelab-api-check/     Day 17 新建 / Day 19 扩到 7 层 / Day 22 扩到 8 层   自检 Skill（云函数）
 │     ├── SKILL.md           操作手册（分层的原因、没验到的条目、重复踩过的坑）
 │     └── check.cjs          A 纯函数 / B SQL 语义 / C 入口分支 / D 写入校验 / E 真跑写入 / F 分层守卫 / G health 冒烟 / H 真跑改与删，207 项断言，零依赖（Node 22+ 内置 sqlite）
+├── skills/notelab-bug-hunt/        Day 24 新建      故障猎手（用 CDP 驱动真实浏览器抓 F12 控制台）
+│     ├── hunt.cjs            16 个刁钻用例喂给**原封不动的** index.html
+│     ├── seed.html                播种坏数据（同源，所以被测页面一个字都不用改）
+│     └── BEFORE.txt / AFTER.txt    修复前后的证据存档
+├── skills/notelab-release-check/   Day 25 新建      **发布前检查（总闸）**
+│     ├── SKILL.md           操作手册（检查项 + "红了去改哪儿"对照表 + 故意弄坏的实验记录）
+│     └── check.cjs          15 项：上线文件与引用 / 密钥红线 / 公网与跨域 / 契约与脱敏 / 数据兜底 / 体积
 └── .gitignore        Day 2                           忽略规则（.env 不上传）
 ```
+
+### 自检怎么跑（Day 25 起有一条总闸）
+
+单个跑：
+
+```bash
+node skills/notelab-filter-check/run.js          # 行为层（DOM 桩，最快）
+node skills/notelab-filter-check/render-check.js # 可见层（真实浏览器）
+node skills/notelab-safety-check/scan.cjs        # 密钥（上线红线，提交前必跑）
+node skills/notelab-safety-check/messages.cjs    # 三类错误文案
+node skills/notelab-api-wiring/check.cjs         # 前端接线
+node skills/notelab-api-check/check.cjs          # 云函数（最慢）
+node skills/notelab-bug-hunt/hunt.cjs            # 刁钻输入猎崩溃（要起本地服务，见下）
+```
+
+**上线前跑总闸**（会把上面几个一并跑完）：
+
+```bash
+node skills/notelab-release-check/check.cjs                 # 发布专项 + 密钥红线
+node skills/notelab-release-check/check.cjs --full          # 再把其余 5 个自检跑一遍
+node skills/notelab-release-check/check.cjs --url=https://你的环境.service.tcloudbase.com
+                                                            # 连真公网一起验
+```
+
+> ⚠️ 总闸的三种结果：**✓ 通过 / ✗ 不通过 / ⊘ 没验到**。
+> **⊘ 不算通过** —— 没给 `--url` 时公网那三项就是 ⊘，别把一片绿灯当成全都验过了。
 
 ### 数据流（一句话）
 
@@ -300,6 +333,12 @@ vibe-coding-lab/
    ★ 三个入口（本地存储 / 演示模式 / 真接口）**都要过**这一层，只堵一个等于没堵。
    回归断言在 `skills/notelab-filter-check/run.js` 的 E 段（E-1～E-8），
    复现工具是 `skills/notelab-bug-hunt/hunt.cjs`（16 个刁钻用例，必须是 0 报错）
+27. **上线前必跑发布前检查**（Day 25 起）：
+   `node skills/notelab-release-check/check.cjs`，有红项就不许发布。
+   ⚠️ 它的结果有三种：**✓ 通过 / ✗ 不通过 / ⊘ 没验到**，**⊘ 不算通过** ——
+   没给 `--url` 时公网那三项就是 ⊘。把"没验到"和"验过了没问题"混为一谈，
+   是发布前检查最容易犯也最致命的错：绿灯一片，其实好几项根本没查。
+   ★ 补上 ⊘ 的办法：上线时给 `--url`，它会真的 GET 一次 `/api/notes`。
 
 > 已知欠账：`app.js`（**850 行**）和云函数自检 `check.cjs`（**1250 行**）都超过了约束 5 的 500 行。
 > 拆分方案记在 `CANDIDATES.md` 的 C7 / C8，本期先不动（拆分是重构，不和新功能混在一天）。

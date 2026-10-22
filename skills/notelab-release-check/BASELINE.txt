@@ -1,0 +1,52 @@
+
+一｜上线文件与引用
+  ✓ A-1 上线必备文件都在（6 个）
+  ✓ A-2 ★ index.html 引用的每个本地文件都真实存在（否则线上 404 / 白屏）
+    · 检查了 6 个引用：styles.css, index.html, errors.js, mock-data.js, api.js, app.js
+  ✓ A-3 代码里取的元素 id 在 index.html 里都存在（拿到 null 会当场崩）
+    · 代码取了 23 个 id，html 里有 27 个
+  ✓ A-4 要上线的文件里没有写死 localhost / 127.0.0.1
+    · 扫了 11 个上线文件（先剥注释，避免把文档里的示例当问题）
+
+二｜密钥红线（直接调用 notelab-safety-check/scan.cjs，不另起一套规则）
+  ✓ B-1 ★ 全仓库密钥 0 条命中（推上公开仓库就不可撤回）
+  ✓ B-2 ★ .env 相关的 9 条断言全绿（含"git 历史里从未出现过 .env"）
+    · scan.cjs 报了 0 条命中，退出码 0
+
+三｜公网与跨域
+    · api.js 里没写死地址（用网址参数 ?api= 临时给），跳过占位符检查
+  ✓ C-1 接口地址不是占位符
+  ✓ C-2 ★ Access-Control-Allow-Origin 是 *（写成单一域名会把别的来源全挡在门外）
+    · 当前值：*
+  ✓ C-3 CORS 允许的 HTTP 方法齐全（GET POST PATCH DELETE OPTIONS）
+  ⊘ C-4 公网 /api/notes 返回 200（没验到：没给 --url，本机连不上就不假装验过）
+  ⊘ C-5 公网响应头与返回形状对（没验到：同上）
+  ⊘ C-6 公网响应头带了 CORS 允许来源（没验到：同上）
+
+四｜契约与脱敏
+  ✓ D-1 请求日志只记时间/方法/路径/状态码，不记请求体
+    · 日志字段：console.log('[notelab/notes] 请求', { at: new Date().toISOString(), method, path, status, ms
+  ✓ D-2 errors.js 排在 api.js / app.js 之前（顺序反了页面会炸）
+  ✗ D-3 源码里没有残留的裸报错文案（"未知错误"之类）  → cloudbase-functions/notes/index.js:146, cloudbase-functions/notes/index.js:179
+
+五｜数据兜底
+  ✓ E-1 笔记数据的第二层校验还在（sanitizeNotes）
+  ✓ E-2 三个入口（本地存储 / 演示 / 接口）都过了这一层
+
+六｜单文件体积（约束 5）
+  ✓ F-1 超过 500 行的文件都已在 README 欠账清单里登记
+    · 当前超标的：app.js 851 行，skills/notelab-api-check/check.cjs 1250 行，skills/notelab-safety-check/scan.cjs 509 行
+
+================================================================
+发布前检查：14/15 项通过，另有 3 项没验到（⊘）
+================================================================
+
+没验到的项（这些**不算**通过，别把它们当绿灯）：
+  ⊘ C-4 公网 /api/notes 返回 200
+  ⊘ C-5 公网响应头与返回形状对
+  ⊘ C-6 公网响应头带了 CORS 允许来源
+
+不通过项：
+  ✗ D-3 源码里没有残留的裸报错文案（"未知错误"之类）  → cloudbase-functions/notes/index.js:146, cloudbase-functions/notes/index.js:179
+
+★ 有红项就不许发布。改完重跑，直到全绿（或全部明确标 ⊘ 并说明原因）。
