@@ -161,6 +161,7 @@ vibe-coding-lab/
 ├── api-contract.md   Day 15 新建 / Day 17-18 续 / Day 22 续   接口契约（字段名照抄 mock-data.js；Day 17 补 limit，Day 18 补 POST 与 409，Day 22 补 PATCH 与 DELETE）
 ├── DEPLOY.md         Day 15 新建 / Day 17-18 续 / Day 22 续   部署指南（注册 / health / 前端托管 / 附录：建库 + 部署读接口 + 写接口 + 改删接口）
 ├── ROLLBACK.md       Day 26 新建                   回滚手册（三条回退路径 + 「什么情况必须回滚」判断表 + 发布阻塞说明）
+├── day26-shots/      Day 26 新建                   今日三张交付截图 + 生成脚本 + 服务日志（截图不是手工拼的，可复现）
 ├── cloudbase-functions/
 │     ├── health/     Day 15 新建                      健康检查云函数（version 暗号埋在返回值里）
 │     └── notes/      Day 17 新建 / Day 19 拆 6 文件     读写接口（同一函数同时吃 GET / POST / PATCH / DELETE 四个方法）
