@@ -38,14 +38,31 @@ const full = args.includes('--full');
    是发布前检查最容易犯、也最致命的错：绿灯一片，其实好几项根本没查。
    ------------------------------------------------------------ */
 let pass = 0;
-const failures = [];
+const blockers = [];   /* 阻断级：不许发布 */
+const warns = [];      /* 非阻断级：可以发，但必须登记成欠账 */
 const skipped = [];
 
-function check(name, cond, detail) {
-  if (cond) { pass++; console.log('  ✓ ' + name); }
-  else {
-    failures.push(name + (detail ? '  → ' + detail : ''));
-    console.log('  ✗ ' + name + (detail ? '  → ' + detail : ''));
+/**
+ * level：'BLOCK'（默认）｜ 'WARN'
+ *
+ * ★ 为什么红项还要分两级（Day 26 发现的第二个设计问题）：
+ *   原来那句"有红项就不许发布"看着严，其实是**纸老虎** ——
+ *   只要有一项长期红着又没人有空修，人就会养成"忽略这条红字"的习惯，
+ *   等真出阻断级问题时，那行红字也没人看了。闸一旦被绕过，比没有闸更糟。
+ *
+ *   所以按"它红的时候，线上会怎样"分级：
+ *     阻断级 —— 线上不可用、数据会丢、密钥外泄、回滚基线说不清
+ *     非阻断级 —— 能用，只是体验差或文案缺一步指引 → 记欠账，下个版本修
+ */
+function check(name, cond, detail, level) {
+  if (cond) { pass++; console.log('  ✓ ' + name); return; }
+  const suffix = detail ? '  → ' + detail : '';
+  if (level === 'WARN') {
+    warns.push(name + suffix);
+    console.log('  ✗ ' + name + suffix + '（非阻断）');
+  } else {
+    blockers.push(name + suffix);
+    console.log('  ✗ ' + name + suffix);
   }
 }
 function skip(name, why) {
@@ -81,6 +98,44 @@ function listFiles(dir, out) {
   });
   return out;
 }
+
+/* git 只读查询：这里只跑 log / status / archive，不写任何东西 */
+function gitOut(a) {
+  const r = spawnSync('git', a, { cwd: ROOT, encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+  return r.status === 0 ? (r.stdout || '') : '';
+}
+
+/* ============================================================
+   零｜可回退历史 —— 发布的前置条件
+   ------------------------------------------------------------
+   ★ 为什么这一节排在发布**之前**：
+     "回滚演练"的全部价值在于出事时退得回去；而"退得回去"这件事，
+     只有在发布前才是可验证的 —— 发布之后你只能赌它成立。
+     所以顺序必须是：先确认历史可回退 → 再发布 → 再演练回退 → 再恢复。
+   ------------------------------------------------------------ */
+section('零｜可回退历史（发布的前置条件）');
+
+const dirty = gitOut(['status', '--porcelain']).trim();
+check('Z-1 工作区干净（有未提交改动时不能发布，否则回滚基线说不清）',
+  dirty === '', dirty.split('\n')[0] || '');
+
+const headSha = gitOut(['rev-parse', 'HEAD']).trim();
+const remoteSha = gitOut(['rev-parse', 'origin/main']).trim();
+check('Z-2 本地 HEAD 与远端 main 一致（不然回滚基线跟线上不是一回事）',
+  headSha !== '' && headSha === remoteSha,
+  '本地 ' + headSha.slice(0, 7) + ' / 远端 ' + (remoteSha ? remoteSha.slice(0, 7) : '(缺失)'));
+
+const history = gitOut(['log', '--oneline', '-n', '6']).trim().split('\n').filter(Boolean);
+check('Z-3 至少有一个可回退的上一版提交', history.length >= 2, '历史只有 ' + history.length + ' 条');
+if (history.length) info('最近几条：' + history.slice(0, 3).join('  |  '));
+
+const prevSha = gitOut(['rev-parse', 'HEAD~1']).trim();
+check('Z-4 回滚基线可解析（HEAD~1）', prevSha !== '' && prevSha !== headSha, prevSha.slice(0, 7));
+
+const diffStat = gitOut(['diff', '--stat', prevSha, headSha]).trim();
+check('Z-5 ★ 上一版与当前版确实不同（否则"回滚"等于没做）',
+  diffStat !== '', '两版之间没有差异');
+if (diffStat) info('两版差异：' + diffStat.split('\n').slice(-1)[0].trim());
 
 /* ============================================================
    A 上线文件与引用：开发机上不疼，一发布就要命
@@ -278,8 +333,14 @@ const bareErrors = [];
     }
   });
 });
+/* D-3 定级**非阻断**，理由是"它红的时候线上会怎样"：
+   `fail(500, '服务器开小差了')` 是中文人话、也没泄露内部信息，
+   缺的只是"重试一次通常就好"这一步指引 —— 出错时页面照样能开、数据不会丢。
+   修它要让云函数引用 root 的 errors.js，得先解决部署打包
+   （云函数目录会不会把它一起带上），那属于打包改造，不是改一行字。
+   已登记 CANDIDATES.md 的 C11，下个版本处理。 */
 check('D-3 源码里没有残留的裸报错文案（"未知错误"之类）',
-  bareErrors.length === 0, bareErrors.join(', '));
+  bareErrors.length === 0, bareErrors.join(', '), 'WARN');
 
 /* ============================================================
    E 数据兜底（Day 24 修的那条，别让它悄悄退化）
@@ -344,7 +405,7 @@ if (full) {
 /* ============================================================
    汇总
    ============================================================ */
-const total = pass + failures.length;
+const total = pass + blockers.length + warns.length;
 console.log('\n' + '='.repeat(64));
 console.log('发布前检查：' + pass + '/' + total + ' 项通过' +
   (skipped.length ? '，另有 ' + skipped.length + ' 项没验到（⊘）' : ''));
@@ -354,13 +415,27 @@ if (skipped.length) {
   console.log('\n没验到的项（这些**不算**通过，别把它们当绿灯）：');
   skipped.forEach((s) => console.log('  ⊘ ' + s));
 }
-if (failures.length) {
-  console.log('\n不通过项：');
-  failures.forEach((f) => console.log('  ✗ ' + f));
-  console.log('\n★ 有红项就不许发布。改完重跑，直到全绿（或全部明确标 ⊘ 并说明原因）。');
+if (warns.length) {
+  console.log('\n非阻断项（允许带病发布，但**必须**已登记成欠账）：');
+  warns.forEach((f) => console.log('  ✗ ' + f));
+}
+if (blockers.length) {
+  console.log('\n阻断项：');
+  blockers.forEach((f) => console.log('  ✗ ' + f));
+}
+
+/* ★ 判定顺序很重要：阻断 > 没验到 > 只剩非阻断 > 全绿。
+   把"没验到"排在"非阻断"前面，是因为**没验过 ≠ 没问题**；
+   而"非阻断"是**验过了、确认只是体验问题**，两者不能混。 */
+if (blockers.length) {
+  console.log('\n★ 有阻断项，不许发布。改完重跑。');
   process.exitCode = 1;
 } else if (skipped.length) {
-  console.log('\n本次没有不通过项，但有没验到的 —— 上线前把 ⊘ 那几项补齐（给 --url 就能验公网）。');
+  console.log('\n★ 没有阻断项，但有 ' + skipped.length + ' 项**没验到** —— 没验过的东西不许发布。');
+  console.log('  补齐验证再发（公网那三项给 --url 就能从 ⊘ 变成真验过）。');
+  process.exitCode = 1;
+} else if (warns.length) {
+  console.log('\n★ 可以发布：无阻断项、无未验项，只剩已登记的非阻断欠账。');
 } else {
   console.log('\n全部通过 ✅');
 }
