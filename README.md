@@ -388,6 +388,8 @@ node skills/notelab-release-check/rollback-drill.cjs   # 静态托管回退路�
 > 已知欠账：`app.js`（**850 行**）和云函数自检 `check.cjs`（**1250 行**）都超过了约束 5 的 500 行。
 > 拆分方案记在 `CANDIDATES.md` 的 C7 / C8，本期先不动（拆分是重构，不和新功能混在一天）。
 > `write.js`（418 行）Day 22 扩到接近上限，再往里加东西之前先考虑拆成 `write-post.js` / `write-patch.js`。
+> ⚠️ **预警**：Day 26 把发布前检查 `check.cjs` 加到 **485 行**（500 上限），
+> 再往里加检查项之前必须先拆。建议拆法：把「零｜可回退历史」和「A 上线文件」抽成 `check-ship.cjs`。
 > Day 23 新建的 `errors.js`（151 行）、`scan.cjs`（450 行）、`messages.cjs`（311 行）都在限额内 ——
 > 从 `app.js` 里**挪出**文案表是往 C7 的反方向走了一步，不是又添一笔欠账。
 

@@ -323,22 +323,27 @@ if (urlArg) {
   const body = /BODY ([\s\S]*)/.exec(out);
   if (!status) {
     skip('C-4 公网 /api/notes 返回 200', '连不上（' + (out.trim() || '无输出') + '）');
-    skip('C-5 公网响应头与返回形状对', '同上');
+    skip('C-5 公网返回形状是 { ok:true, notes:[...] }', '同上');
   } else {
     check('C-4 公网 /api/notes 返回 200', status[1] === '200', '实际 ' + status[1]);
+    const raw = (body && body[1]) || '';
+    /* 详情里要去换行：静态托管常见的失败是返回整页 html，
+       带着换行打出来会把汇总表冲成一坨，反而看不清结论 */
+    const preview = raw.replace(/\s+/g, ' ').trim().slice(0, 60);
     let shapeOk = false;
+    let shapeWhy = '返回的不是 JSON —— 实际是「' + preview + '」';
     try {
-      const j = JSON.parse((body && body[1]) || '{}');
+      const j = JSON.parse(raw);
       shapeOk = j.ok === true && Array.isArray(j.notes);
-    } catch (e) { shapeOk = false; }
-    check('C-5 公网返回形状是 { ok:true, notes:[...] }', shapeOk,
-      ((body && body[1]) || '').slice(0, 80));
+      if (!shapeOk) shapeWhy = '缺 ok 或 notes 字段 —— 实际是「' + preview + '」';
+    } catch (e) { /* JSON.parse 失败说明根本不是 JSON，shapeWhy 保持原值 */ }
+    check('C-5 公网返回形状是 { ok:true, notes:[...] }', shapeOk, shapeWhy);
     check('C-6 公网响应头带了 CORS 允许来源',
       !!originGot && originGot[1] !== 'null', '响应头里的值是 ' + (originGot ? originGot[1] : '无'));
   }
 } else {
   skip('C-4 公网 /api/notes 返回 200', '没给 --url，本机连不上就不假装验过');
-  skip('C-5 公网响应头与返回形状对', '同上');
+  skip('C-5 公网返回形状是 { ok:true, notes:[...] }', '同上');
   skip('C-6 公网响应头带了 CORS 允许来源', '同上');
 }
 
