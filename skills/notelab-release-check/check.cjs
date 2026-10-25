@@ -113,6 +113,11 @@ function gitOut(a) {
      只有在发布前才是可验证的 —— 发布之后你只能赌它成立。
      所以顺序必须是：先确认历史可回退 → 再发布 → 再演练回退 → 再恢复。
    ------------------------------------------------------------ */
+/* 真正会被传到静态托管上去的文件。
+   ★ 它同时也是"回滚基线"的判据 —— 见 Z-4：
+     只有**改动了这份清单**的提交，退回去线上才有变化。 */
+const REQUIRED = ['index.html', 'app.js', 'api.js', 'errors.js', 'mock-data.js', 'styles.css'];
+
 section('零｜可回退历史（发布的前置条件）');
 
 const dirty = gitOut(['status', '--porcelain']).trim();
@@ -123,26 +128,60 @@ const headSha = gitOut(['rev-parse', 'HEAD']).trim();
 const remoteSha = gitOut(['rev-parse', 'origin/main']).trim();
 check('Z-2 本地 HEAD 与远端 main 一致（不然回滚基线跟线上不是一回事）',
   headSha !== '' && headSha === remoteSha,
-  '本地 ' + headSha.slice(0, 7) + ' / 远端 ' + (remoteSha ? remoteSha.slice(0, 7) : '(缺失)'));
+  remoteSha
+    ? '本地 ' + headSha.slice(0, 7) + ' / 远端 ' + remoteSha.slice(0, 7) + '（git fetch 后重跑）'
+    : '远端引用 origin/main 不存在 —— 先 git fetch origin main；' +
+      'fetch 完仍缺的话手动补：mkdir -p .git/refs/remotes/origin && ' +
+      'printf "%s\\n" $(cat .git/FETCH_HEAD | awk \'{print $1}\') > .git/refs/remotes/origin/main');
 
 const history = gitOut(['log', '--oneline', '-n', '6']).trim().split('\n').filter(Boolean);
 check('Z-3 至少有一个可回退的上一版提交', history.length >= 2, '历史只有 ' + history.length + ' 条');
 if (history.length) info('最近几条：' + history.slice(0, 3).join('  |  '));
 
-const prevSha = gitOut(['rev-parse', 'HEAD~1']).trim();
-check('Z-4 回滚基线可解析（HEAD~1）', prevSha !== '' && prevSha !== headSha, prevSha.slice(0, 7));
+/**
+ * 回滚基线 = 最近一个**改动了发布物**的提交，而不是 HEAD~1。
+ * ★ HEAD~1 常常是纯文档/纯工具提交（改 README、加自检脚本），
+ *   它的发布物跟当前一字不差 —— 退到它，线上**毫无变化**，
+ *   你会以为自己回滚成功了，其实什么都没发生。这种"假回滚"比不回滚更危险。
+ */
+function findRollbackTarget() {
+  const log = gitOut(['log', '--format=%H', '-n', '30']).trim().split('\n').filter(Boolean);
+  for (const sha of log) {
+    if (sha === headSha) continue;
+    const d = spawnSync('git', ['diff', '--quiet', headSha, sha, '--'].concat(REQUIRED),
+      { cwd: ROOT });
+    if (d.status !== 0) return sha;   /* 发布物有差异 → 这才退得回去 */
+  }
+  return '';
+}
 
-const diffStat = gitOut(['diff', '--stat', prevSha, headSha]).trim();
-check('Z-5 ★ 上一版与当前版确实不同（否则"回滚"等于没做）',
-  diffStat !== '', '两版之间没有差异');
-if (diffStat) info('两版差异：' + diffStat.split('\n').slice(-1)[0].trim());
+const headPrev = gitOut(['rev-parse', 'HEAD~1']).trim();
+const prevIsNoop = !!headPrev &&
+  spawnSync('git', ['diff', '--quiet', headSha, headPrev, '--'].concat(REQUIRED),
+    { cwd: ROOT }).status === 0;
+const rollbackTarget = findRollbackTarget();
+
+check('Z-4 ★ 存在"上一个改动了发布物的提交"作为回滚基线（不是简单的 HEAD~1）',
+  rollbackTarget !== '' && rollbackTarget !== headSha,
+  rollbackTarget ? rollbackTarget.slice(0, 7) : '30 条历史里没找到第二版发布物');
+if (rollbackTarget) {
+  const stat = gitOut(['diff', '--stat', rollbackTarget, headSha, '--'].concat(REQUIRED)).trim();
+  info('回滚基线：' + rollbackTarget.slice(0, 7) +
+    (stat ? '　与当前差异：' + stat.split('\n').slice(-1)[0].trim() : ''));
+}
+/* ★ 提示而非阻断：HEAD~1 是空回滚不代表不能发布，
+   只是提醒"真要回滚时记得往前再退一个"。 */
+check('Z-5 HEAD~1 不是"空回滚"（纯文档提交，发布物与当前相同）',
+  !prevIsNoop,
+  'HEAD~1 的发布物与当前一致 —— 真回滚时要退到 ' +
+    (rollbackTarget ? rollbackTarget.slice(0, 7) : '(找不到)') + '，工具已自动往前取',
+  'WARN');
 
 /* ============================================================
    A 上线文件与引用：开发机上不疼，一发布就要命
    ============================================================ */
 section('一｜上线文件与引用');
 
-const REQUIRED = ['index.html', 'app.js', 'api.js', 'errors.js', 'mock-data.js', 'styles.css'];
 const missing = REQUIRED.filter((f) => !exists(path.join(ROOT, f)));
 check('A-1 上线必备文件都在（' + REQUIRED.length + ' 个）',
   missing.length === 0, '缺 ' + missing.join(', '));
